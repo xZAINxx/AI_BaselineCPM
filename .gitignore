@@ -12,6 +12,8 @@ dist/
 # SQLite (local data)
 backend/schedule.db
 backend/schedule.db-*
+backend/cpm.db
+backend/cpm.db-*
 
 # Node / Vite
 frontend/node_modules/

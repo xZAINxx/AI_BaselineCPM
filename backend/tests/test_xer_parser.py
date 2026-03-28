@@ -44,6 +44,7 @@ def test_import_xer_to_sqlite() -> None:
         assert summary["proj_id"] == "100"
         assert summary["activities_count"] == 3
         assert summary["relationships_count"] == 2
+        assert summary["wbs_count"] == 0
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM activities WHERE proj_id = ?", ("100",))
         assert cur.fetchone()[0] == 3

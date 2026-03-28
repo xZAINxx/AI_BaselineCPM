@@ -22,6 +22,17 @@ Longest path (critical chain):
   After forward pass, ``driver_pred[t]`` stores one predecessor that dominated
   ``ES[t]``. Trace backward from critical terminal activities along
   ``driver_pred`` to build one critical path chain.
+
+**Free float** (PDM): for each predecessor *i* and successor *j* with lag *L*,
+the slack on *i* from that link alone is:
+
+- **FS:** ``ES[j] - L - EF[i]``
+- **SS:** ``ES[j] - L - ES[i]``
+- **FF:** ``EF[j] - L - EF[i]``
+- **SF:** ``EF[j] - L - ES[i]``
+
+``FF[i]`` is the minimum of these values over outgoing links (non-negative).
+Terminal activities (no successors) use ``FF = TF``.
 """
 
 from __future__ import annotations
@@ -33,6 +44,8 @@ from typing import Dict, List, Optional, Set, Tuple
 EPS = 1e-3
 # Tighter epsilon for iterative PDM convergence
 _RELAX_EPS = 1e-6
+# Near-critical threshold: 5 working days * 8 hours
+NEAR_CRIT_THRESHOLD = 40.0
 
 
 @dataclass
@@ -90,6 +103,7 @@ def forward_pass(
     topo: List[str],
     duration: Dict[str, float],
     preds_by_succ: Dict[str, List[Rel]],
+    constraints: Optional[Dict[str, Tuple[str, float]]] = None,
 ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, Optional[str]]]:
     """
     Forward pass: compute ES, EF and ``driver_pred[t]`` = predecessor that last
@@ -102,9 +116,18 @@ def forward_pass(
     - **FF:** ``EF_succ >= EF_pred + lag`` → ``ES_succ >= EF_pred + lag - D_succ``
     - **SF:** ``EF_succ >= ES_pred + lag`` → ``ES_succ >= ES_pred + lag - D_succ``
 
+    Activity constraints (applied after predecessor logic):
+
+    - **SNET:** ``ES >= constraint_date``
+    - **MSO:** ``ES = constraint_date`` (forced)
+    - **MFO:** ``ES = constraint_date - duration`` (forced finish)
+
     After SS/FS constraints, set ``EF = ES + D``, then raise ``EF`` to satisfy
     any **FF** / **SF** lower bounds on finish, then adjust ``ES`` if needed.
     """
+    if constraints is None:
+        constraints = {}
+
     ES: Dict[str, float] = {t: 0.0 for t in topo}
     EF: Dict[str, float] = {t: 0.0 for t in topo}
     driver_pred: Dict[str, Optional[str]] = {t: None for t in topo}
@@ -143,6 +166,17 @@ def forward_pass(
                             best_pred = p
                 if new_es < 0:
                     new_es = 0.0
+
+            cstr = constraints.get(t)
+            if cstr:
+                ctype, cdate = cstr
+                if ctype == "SNET":
+                    new_es = max(new_es, cdate)
+                elif ctype == "MSO":
+                    new_es = cdate
+                elif ctype == "MFO":
+                    new_es = cdate - d
+
             if abs(new_es - ES[t]) > _RELAX_EPS:
                 ES[t] = new_es
                 driver_pred[t] = best_pred if preds else None
@@ -190,6 +224,7 @@ def backward_pass(
     duration: Dict[str, float],
     outgoing: Dict[str, List[Tuple[str, Rel]]],
     EF: Dict[str, float],
+    constraints: Optional[Dict[str, Tuple[str, float]]] = None,
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
     """
     Backward pass (reverse topological order, iterated):
@@ -202,7 +237,14 @@ def backward_pass(
     - **SS:** ``LF_i <= LF_j - D_j - lag + D_i``
     - **FF:** ``LF_i <= LF_j - lag``
     - **SF:** ``LF_i <= LF_j + D_i - lag``  (mirror of ``EF_j >= ES_i + lag``)
+
+    Activity constraints:
+
+    - **FNLT:** ``LF <= constraint_date``
     """
+    if constraints is None:
+        constraints = {}
+
     proj_end = max(EF.values()) if EF else 0.0
 
     LF: Dict[str, float] = {t: proj_end for t in topo}
@@ -227,9 +269,14 @@ def backward_pass(
                     candidates.append(LF[v] - lag)
                 elif r.typ == "SF":
                     candidates.append(LF[v] + d - lag)
+
+            cstr = constraints.get(t)
+            if cstr:
+                ctype, cdate = cstr
+                if ctype == "FNLT":
+                    candidates.append(cdate)
+
             new_lf = min(candidates)
-            if new_lf < 0:
-                new_lf = 0.0
             if abs(new_lf - LF[t]) > _RELAX_EPS:
                 LF[t] = new_lf
                 LS[t] = LF[t] - d
@@ -248,6 +295,46 @@ def backward_pass(
         LS[t] = LF[t] - d
 
     return LS, LF
+
+
+def compute_free_float(
+    task_ids: List[str],
+    outgoing: Dict[str, List[Tuple[str, Rel]]],
+    ES: Dict[str, float],
+    EF: Dict[str, float],
+    TF: Dict[str, float],
+) -> Dict[str, float]:
+    """
+    Free float per activity: min slack to successors; terminals use total float.
+
+    Uses early times from the forward pass and ``TF`` from ``LS - ES``.
+    """
+    FF: Dict[str, float] = {}
+    for t in task_ids:
+        succs = outgoing.get(t, [])
+        if not succs:
+            FF[t] = TF.get(t, 0.0)
+            continue
+        best = float("inf")
+        for j, r in succs:
+            lag = r.lag
+            if r.typ == "FS":
+                slack = ES[j] - lag - EF[t]
+            elif r.typ == "SS":
+                slack = ES[j] - lag - ES[t]
+            elif r.typ == "FF":
+                slack = EF[j] - lag - EF[t]
+            elif r.typ == "SF":
+                slack = EF[j] - lag - ES[t]
+            else:
+                slack = float("inf")
+            if slack < best:
+                best = slack
+        if best == float("inf"):
+            FF[t] = max(0.0, TF.get(t, 0.0))
+        else:
+            FF[t] = max(0.0, best)
+    return FF
 
 
 def trace_critical_path(
@@ -283,6 +370,7 @@ def compute_cpm(
     task_ids: List[str],
     duration: Dict[str, float],
     relationships: List[Tuple[str, str, str, float]],
+    constraints: Optional[Dict[str, Tuple[str, float]]] = None,
 ) -> Tuple[
     Optional[str],
     Dict[str, float],
@@ -290,15 +378,27 @@ def compute_cpm(
     Dict[str, float],
     Dict[str, float],
     Dict[str, float],
+    Dict[str, float],
+    Dict[str, bool],
     Dict[str, bool],
     float,
     List[str],
 ]:
     """
+    Args:
+      task_ids: List of activity IDs.
+      duration: Mapping of task_id to duration in hours.
+      relationships: List of (pred, succ, type, lag) tuples.
+      constraints: Optional mapping of task_id to (constraint_type, constraint_date).
+        Supported types: SNET, FNLT, MSO, MFO, ASAP, ALAP.
+
     Returns:
-      cycle_error or None, ES, EF, LS, LF, TF, is_critical, project_end_hrs,
-      critical_path (ordered task ids).
+      cycle_error or None, ES, EF, LS, LF, TF, FF, is_critical, is_near_critical,
+      project_end_hrs, critical_path (ordered task ids).
     """
+    if constraints is None:
+        constraints = {}
+
     nodes, outgoing, preds_by_succ = build_graph(task_ids, relationships)
     ok, topo = topological_order(nodes, outgoing)
     if not ok:
@@ -310,24 +410,30 @@ def compute_cpm(
             {},
             {},
             {},
+            {},
+            {},
             0.0,
             [],
         )
 
-    ES, EF, driver_pred = forward_pass(topo, duration, preds_by_succ)
+    ES, EF, driver_pred = forward_pass(topo, duration, preds_by_succ, constraints)
     topo_rev = list(reversed(topo))
-    LS, LF = backward_pass(topo_rev, topo, duration, outgoing, EF)
+    LS, LF = backward_pass(topo_rev, topo, duration, outgoing, EF, constraints)
 
     TF: Dict[str, float] = {}
     crit: Dict[str, bool] = {}
+    near_crit: Dict[str, bool] = {}
     for t in task_ids:
         tf = LS.get(t, 0.0) - ES.get(t, 0.0)
         TF[t] = tf
-        crit[t] = abs(tf) < EPS
+        crit[t] = tf <= EPS
+        near_crit[t] = not crit[t] and 0 < tf < NEAR_CRIT_THRESHOLD
+
+    FF = compute_free_float(task_ids, outgoing, ES, EF, TF)
 
     proj_end = max(EF.values()) if EF else 0.0
     path = trace_critical_path(nodes, outgoing, EF, driver_pred, crit)
-    return None, ES, EF, LS, LF, TF, crit, proj_end, path
+    return None, ES, EF, LS, LF, TF, FF, crit, near_crit, proj_end, path
 
 
 def run_cpm_for_project_rows(
@@ -340,9 +446,39 @@ def run_cpm_for_project_rows(
     Activities need ``task_id``, ``duration_hrs``. Relationships need
     ``pred_id``/``succ_id`` or legacy ``pred_task_id``/``succ_task_id``,
     ``rel_type``/``pred_type``, ``lag_hrs``.
+
+    Activities may optionally have ``constraint_type`` and ``constraint_date``
+    for schedule constraints (SNET, FNLT, MSO, MFO, ASAP, ALAP).
+
+    Progress tracking (retained logic scheduling):
+    - If ``actual_finish`` is set, duration is 0 (activity is complete).
+    - If ``actual_start`` is set but not ``actual_finish``, use ``remaining_duration_hrs``
+      (if set) instead of ``duration_hrs``.
     """
     task_ids = [str(a["task_id"]) for a in activities]
-    duration = {str(a["task_id"]): float(a.get("duration_hrs") or 0) for a in activities}
+
+    duration: Dict[str, float] = {}
+    for a in activities:
+        tid = str(a["task_id"])
+        base_dur = float(a.get("duration_hrs") or 0)
+        actual_finish = a.get("actual_finish")
+        actual_start = a.get("actual_start")
+        remaining = a.get("remaining_duration_hrs")
+
+        if actual_finish is not None:
+            duration[tid] = 0.0
+        elif actual_start is not None and remaining is not None:
+            duration[tid] = float(remaining)
+        else:
+            duration[tid] = base_dur
+
+    constraints: Dict[str, Tuple[str, float]] = {}
+    for a in activities:
+        ctype = a.get("constraint_type")
+        cdate = a.get("constraint_date")
+        if ctype and cdate is not None:
+            constraints[str(a["task_id"])] = (str(ctype).upper(), float(cdate))
+
     rels: List[Tuple[str, str, str, float]] = []
     for r in relationships:
         pr = r.get("pred_id", r.get("pred_task_id"))
@@ -350,7 +486,9 @@ def run_cpm_for_project_rows(
         typ = str(r.get("rel_type", r.get("pred_type", "FS")))
         rels.append((str(pr), str(su), typ, float(r.get("lag_hrs") or 0)))
 
-    err, ES, EF, LS, LF, TF, crit, proj_end, path = compute_cpm(task_ids, duration, rels)
+    err, ES, EF, LS, LF, TF, FF, crit, near_crit, proj_end, path = compute_cpm(
+        task_ids, duration, rels, constraints
+    )
     if err:
         return err, {}, 0.0, []
 
@@ -362,6 +500,8 @@ def run_cpm_for_project_rows(
             "late_start": LS[t],
             "late_finish": LF[t],
             "total_float_hrs": TF[t],
+            "free_float_hrs": FF[t],
             "is_critical": 1 if crit[t] else 0,
+            "is_near_critical": 1 if near_crit[t] else 0,
         }
     return None, out, proj_end, path

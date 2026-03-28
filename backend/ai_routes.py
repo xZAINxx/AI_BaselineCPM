@@ -10,10 +10,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ai_engine import (
+    analyze_schedule_network,
     apply_actions,
     build_schedule_context,
     chat_with_claude,
     extract_json_object,
+    generate_auto_fixes,
     generate_fix_suggestions,
 )
 from cpm_engine import run_cpm_for_project_rows
@@ -32,6 +34,7 @@ class ChatRequest(BaseModel):
     proj_id: str
     messages: List[ChatMessage] = Field(default_factory=list)
     auto_apply: bool = False
+    session_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -58,6 +61,10 @@ class ActivityUpdate(BaseModel):
     wbs_id: Optional[str] = None
     calendar_id: Optional[str] = None
     is_milestone: Optional[int] = None
+    actual_start: Optional[float] = None
+    actual_finish: Optional[float] = None
+    remaining_duration_hrs: Optional[float] = None
+    percent_complete: Optional[float] = None
 
 
 class RelationshipCreate(BaseModel):
@@ -70,9 +77,15 @@ class RelationshipCreate(BaseModel):
 def _fetch_activities(conn: Any, proj_id: str) -> List[dict]:
     cur = conn.cursor()
     cur.execute(
-        """SELECT proj_id, task_id, name, duration_hrs, wbs_id, calendar_id,
-           early_start, early_finish, late_start, late_finish, total_float_hrs,
-           is_critical, is_milestone FROM activities WHERE proj_id = ? ORDER BY task_id""",
+        """SELECT a.proj_id, a.task_id, a.name, a.duration_hrs, a.wbs_id, a.calendar_id,
+           a.early_start, a.early_finish, a.late_start, a.late_finish, a.total_float_hrs,
+           a.free_float_hrs, a.is_critical, a.is_near_critical, a.is_milestone,
+           a.constraint_type, a.constraint_date,
+           a.actual_start, a.actual_finish, a.remaining_duration_hrs, a.percent_complete,
+           w.wbs_name, w.wbs_short_name
+           FROM activities a
+           LEFT JOIN wbs w ON a.proj_id = w.proj_id AND a.wbs_id = w.wbs_id
+           WHERE a.proj_id = ? ORDER BY a.task_id""",
         (proj_id,),
     )
     cols = [d[0] for d in cur.description]
@@ -101,7 +114,7 @@ def _persist_cpm(conn: Any, proj_id: str) -> Optional[str]:
         conn.execute(
             """UPDATE activities SET
                early_start = ?, early_finish = ?, late_start = ?, late_finish = ?,
-               total_float_hrs = ?, is_critical = ?
+               total_float_hrs = ?, free_float_hrs = ?, is_critical = ?, is_near_critical = ?
                WHERE proj_id = ? AND task_id = ?""",
             (
                 vals["early_start"],
@@ -109,7 +122,9 @@ def _persist_cpm(conn: Any, proj_id: str) -> Optional[str]:
                 vals["late_start"],
                 vals["late_finish"],
                 vals["total_float_hrs"],
+                vals["free_float_hrs"],
                 vals["is_critical"],
+                vals["is_near_critical"],
                 proj_id,
                 tid,
             ),
@@ -137,7 +152,7 @@ def ai_chat(body: ChatRequest) -> ChatResponse:
         msgs = [m.model_dump() for m in body.messages]
 
         try:
-            reply_text, parsed = chat_with_claude(msgs, ctx)
+            reply_text, parsed = chat_with_claude(msgs, ctx, session_id=body.session_id)
         except RuntimeError:
             return ChatResponse(
                 reply="Set ANTHROPIC_API_KEY in backend/.env and restart the server.",
@@ -190,6 +205,76 @@ def ai_suggestions(proj_id: str) -> dict:
         conn.close()
 
 
+@router.get("/analysis")
+def ai_analysis(proj_id: str) -> dict:
+    """
+    Structured schedule network analysis (no API key required).
+
+    Returns critical path drivers, float consumption risks, logic gaps,
+    relationship density, and overall schedule score.
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Project not found")
+        acts = _fetch_activities(conn, proj_id)
+        rels = _fetch_relationships(conn, proj_id)
+        diag = run_diagnostics(proj_id, acts, rels)
+        analysis = analyze_schedule_network(proj_id, acts, rels, diag)
+        return analysis
+    finally:
+        conn.close()
+
+
+class ApplyActionsRequest(BaseModel):
+    proj_id: str
+    actions: List[dict]
+
+
+class ApplyActionsResponse(BaseModel):
+    applied: List[str] = Field(default_factory=list)
+    cpm_error: Optional[str] = None
+    error: Optional[str] = None
+
+
+@router.post("/apply", response_model=ApplyActionsResponse)
+def apply_actions_endpoint(body: ApplyActionsRequest) -> ApplyActionsResponse:
+    """Apply a list of schedule actions and re-run CPM."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (body.proj_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Project not found")
+        try:
+            log = apply_actions(conn, body.proj_id, body.actions)
+            cpm_err = _persist_cpm(conn, body.proj_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return ApplyActionsResponse(applied=log, cpm_error=cpm_err)
+    finally:
+        conn.close()
+
+
+@router.get("/auto-fixes")
+def get_auto_fixes(proj_id: str) -> dict:
+    """Rule-based concrete fix actions (no API key required)."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Project not found")
+        acts = _fetch_activities(conn, proj_id)
+        rels = _fetch_relationships(conn, proj_id)
+        fixes = generate_auto_fixes(proj_id, acts, rels)
+        return {"fixes": fixes, "count": len(fixes)}
+    finally:
+        conn.close()
+
+
 # --- CRUD used by AI actions and manual API ---
 
 
@@ -204,8 +289,10 @@ def create_activity(proj_id: str, body: ActivityCreate) -> dict:
         cur.execute(
             """INSERT INTO activities (
                 task_id, proj_id, name, duration_hrs, wbs_id, calendar_id, is_milestone,
-                early_start, early_finish, late_start, late_finish, total_float_hrs, is_critical
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 0)""",
+                constraint_type, constraint_date,
+                early_start, early_finish, late_start, late_finish, total_float_hrs,
+                free_float_hrs, is_critical
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0)""",
             (
                 body.task_id,
                 proj_id,

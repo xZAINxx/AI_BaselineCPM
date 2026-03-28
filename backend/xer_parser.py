@@ -136,6 +136,42 @@ def normalize_pred_type(raw: str) -> str:
     return "FS"
 
 
+def normalize_constraint_type(raw: str) -> Optional[str]:
+    """Map P6 constraint type codes to SNET, FNLT, MSO, MFO, ASAP, ALAP."""
+    r = (raw or "").strip().upper()
+    if not r:
+        return None
+    if "SNET" in r or r == "CS_SNET" or "STARTNOEARLIERTHAN" in r:
+        return "SNET"
+    if "FNLT" in r or r == "CS_FNLT" or "FINISHNOLATERTHAN" in r:
+        return "FNLT"
+    if "MSO" in r or r == "CS_MSO" or "MUSTSTARTON" in r:
+        return "MSO"
+    if "MFO" in r or r == "CS_MFO" or "MUSTFINISHON" in r:
+        return "MFO"
+    if "ASAP" in r or r == "CS_ASAP" or "ASSOONASPOSSIBLE" in r:
+        return "ASAP"
+    if "ALAP" in r or r == "CS_ALAP" or "ASLATEASPOSSIBLE" in r:
+        return "ALAP"
+    return None
+
+
+def parse_constraint_date(raw: str, hours_per_day: float = 8.0) -> Optional[float]:
+    """
+    Parse P6 constraint date to hours from time 0.
+
+    P6 stores dates as ISO strings or days since epoch. If numeric, assume hours.
+    """
+    if not raw or raw.strip() == "":
+        return None
+    raw = raw.strip()
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    return None
+
+
 def import_xer_to_sqlite(conn: Any, data: bytes, filename: str = "upload.xer") -> Dict[str, Any]:
     """
     Parse XER bytes (streaming line read) and insert into SQLite.
@@ -162,6 +198,7 @@ def import_xer_to_sqlite(conn: Any, data: bytes, filename: str = "upload.xer") -
 
     cur = conn.cursor()
     cur.execute("DELETE FROM calendars WHERE proj_id = ?", (proj_id,))
+    cur.execute("DELETE FROM wbs WHERE proj_id = ?", (proj_id,))
     cur.execute("DELETE FROM projects WHERE proj_id = ?", (proj_id,))
 
     cur.execute(
@@ -188,7 +225,13 @@ def import_xer_to_sqlite(conn: Any, data: bytes, filename: str = "upload.xer") -
             cal = d.get("clndr_id") or ""
             ttype = (d.get("task_type") or "").upper()
             is_ms = 1 if dur <= 0.0 or "MILESTONE" in ttype or ttype == "TT_MILE" else 0
-            act_rows.append((str(tid), proj_id, name, dur, str(cal) if cal else None, str(wbs) if wbs else None, is_ms))
+            cstr_type = normalize_constraint_type(d.get("cstr_type") or d.get("constraint_type") or "")
+            cstr_date = parse_constraint_date(d.get("cstr_date") or d.get("constraint_date") or "")
+            act_rows.append((
+                str(tid), proj_id, name, dur,
+                str(cal) if cal else None, str(wbs) if wbs else None, is_ms,
+                cstr_type, cstr_date,
+            ))
 
     bulk_insert_activities(conn, act_rows)
 
@@ -209,6 +252,29 @@ def import_xer_to_sqlite(conn: Any, data: bytes, filename: str = "upload.xer") -
             rel_rows.append((proj_id, str(pr), str(succ), pt, lag))
 
     bulk_insert_relationships(conn, rel_rows)
+
+    # Parse WBS hierarchy from PROJWBS table
+    wbs_fields, wbs_rows = tables.get("PROJWBS", ([], []))
+    wbs_count = 0
+    if wbs_fields:
+        for row in wbs_rows:
+            d = row_to_dict(wbs_fields, row)
+            wid = d.get("wbs_id")
+            if not wid:
+                continue
+            p = d.get("proj_id")
+            if p and str(p) != str(proj_id):
+                continue
+            parent = d.get("parent_wbs_id") or None
+            short_name = d.get("wbs_short_name") or ""
+            name = d.get("wbs_name") or short_name or f"WBS {wid}"
+            seq = _safe_int(d.get("seq_num"), 0)
+            cur.execute(
+                """INSERT OR REPLACE INTO wbs (wbs_id, proj_id, parent_wbs_id, wbs_short_name, wbs_name, seq_num)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (str(wid), proj_id, str(parent) if parent else None, short_name, name, seq or 0),
+            )
+            wbs_count += 1
 
     cal_count = 0
     cal_fields, cal_rows = tables.get("CALENDAR", ([], []))
@@ -237,4 +303,5 @@ def import_xer_to_sqlite(conn: Any, data: bytes, filename: str = "upload.xer") -
         "activities_count": len(act_rows),
         "relationships_count": len(rel_rows),
         "calendars_count": cal_count,
+        "wbs_count": wbs_count,
     }

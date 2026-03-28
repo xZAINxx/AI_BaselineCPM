@@ -52,10 +52,18 @@ def init_db(conn: sqlite3.Connection) -> None:
             late_start REAL,
             late_finish REAL,
             total_float_hrs REAL,
+            free_float_hrs REAL,
             is_critical INTEGER DEFAULT 0,
+            is_near_critical INTEGER DEFAULT 0,
             calendar_id TEXT,
             wbs_id TEXT,
             is_milestone INTEGER DEFAULT 0,
+            constraint_type TEXT,
+            constraint_date REAL,
+            actual_start REAL,
+            actual_finish REAL,
+            remaining_duration_hrs REAL,
+            percent_complete REAL DEFAULT 0,
             FOREIGN KEY (proj_id) REFERENCES projects(proj_id) ON DELETE CASCADE,
             UNIQUE (proj_id, task_id)
         );
@@ -77,13 +85,69 @@ def init_db(conn: sqlite3.Connection) -> None:
             data TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS wbs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wbs_id TEXT NOT NULL,
+            proj_id TEXT NOT NULL,
+            parent_wbs_id TEXT,
+            wbs_short_name TEXT,
+            wbs_name TEXT,
+            seq_num INTEGER DEFAULT 0,
+            FOREIGN KEY (proj_id) REFERENCES projects(proj_id) ON DELETE CASCADE,
+            UNIQUE (proj_id, wbs_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_wbs_proj ON wbs(proj_id);
+        CREATE INDEX IF NOT EXISTS idx_wbs_id ON wbs(wbs_id);
+
         CREATE INDEX IF NOT EXISTS idx_activities_proj ON activities(proj_id);
         CREATE INDEX IF NOT EXISTS idx_activities_task ON activities(task_id);
         CREATE INDEX IF NOT EXISTS idx_rel_pred ON relationships(pred_id);
         CREATE INDEX IF NOT EXISTS idx_rel_succ ON relationships(succ_id);
         CREATE INDEX IF NOT EXISTS idx_rel_proj ON relationships(proj_id);
+
+        CREATE TABLE IF NOT EXISTS baselines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proj_id TEXT NOT NULL,
+            baseline_number INTEGER NOT NULL DEFAULT 1,
+            name TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (proj_id) REFERENCES projects(proj_id) ON DELETE CASCADE,
+            UNIQUE (proj_id, baseline_number)
+        );
+
+        CREATE TABLE IF NOT EXISTS baseline_activities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            baseline_id INTEGER NOT NULL,
+            task_id TEXT NOT NULL,
+            duration_hrs REAL,
+            early_start REAL,
+            early_finish REAL,
+            late_start REAL,
+            late_finish REAL,
+            total_float_hrs REAL,
+            is_critical INTEGER DEFAULT 0,
+            FOREIGN KEY (baseline_id) REFERENCES baselines(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_baselines_proj ON baselines(proj_id);
+        CREATE INDEX IF NOT EXISTS idx_baseline_activities_bl ON baseline_activities(baseline_id);
         """
     )
+    migration_cols = [
+        "free_float_hrs REAL",
+        "constraint_type TEXT",
+        "constraint_date REAL",
+        "actual_start REAL",
+        "actual_finish REAL",
+        "remaining_duration_hrs REAL",
+        "percent_complete REAL DEFAULT 0",
+        "is_near_critical INTEGER DEFAULT 0",
+    ]
+    for col in migration_cols:
+        try:
+            conn.execute(f"ALTER TABLE activities ADD COLUMN {col}")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
 
 
@@ -100,14 +164,17 @@ def bulk_insert_activities(
     Insert many activity rows in one transaction via ``executemany``.
 
     Row tuple order:
-    (task_id, proj_id, name, duration_hrs, calendar_id, wbs_id, is_milestone)
+    (task_id, proj_id, name, duration_hrs, calendar_id, wbs_id, is_milestone,
+     constraint_type, constraint_date)
     """
     conn.executemany(
         """
         INSERT INTO activities (
             task_id, proj_id, name, duration_hrs, calendar_id, wbs_id, is_milestone,
-            early_start, early_finish, late_start, late_finish, total_float_hrs, is_critical
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 0)
+            constraint_type, constraint_date,
+            early_start, early_finish, late_start, late_finish, total_float_hrs,
+            free_float_hrs, is_critical
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, 0)
         """,
         rows,
     )

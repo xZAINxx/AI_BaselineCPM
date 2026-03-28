@@ -31,6 +31,14 @@ export function buildDisplayRows(activities, opts) {
   if (criticalOnly) rows = rows.filter((a) => a.is_critical)
   if (longestPathOnly) rows = rows.filter((a) => a.is_critical)
 
+  const wbsNameMap = new Map()
+  for (const a of rows) {
+    const wid = a.wbs_id != null ? String(a.wbs_id) : ''
+    if (wid && a.wbs_name && !wbsNameMap.has(wid)) {
+      wbsNameMap.set(wid, a.wbs_name)
+    }
+  }
+
   const { key, dir } = sort
   const mul = dir === 'asc' ? 1 : -1
   rows.sort((a, b) => {
@@ -58,11 +66,12 @@ export function buildDisplayRows(activities, opts) {
     const w = activity.wbs_id != null ? String(activity.wbs_id) : ''
     if (w !== lastWbs) {
       const level = wbsLevel(w)
+      const wbsLabel = wbsNameMap.get(w) || w || '(No WBS)'
       out.push({
         kind: 'wbs',
         id: `wbs-band-${w || 'none'}`,
         wbsId: w,
-        label: w || '(No WBS)',
+        label: wbsLabel,
         level,
       })
       lastWbs = w

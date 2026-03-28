@@ -25,6 +25,24 @@ class ImportResult(BaseModel):
     activities_count: int
     relationships_count: int
     calendars_count: int = 0
+    wbs_count: int = 0
+
+
+class WbsCreateBody(BaseModel):
+    """JSON body for POST /api/projects/{proj_id}/wbs."""
+
+    wbs_id: str
+    parent_wbs_id: Optional[str] = None
+    wbs_short_name: str = ""
+    wbs_name: Optional[str] = None
+
+
+class WbsUpdateBody(BaseModel):
+    """JSON body for PUT /api/projects/{proj_id}/wbs/{wbs_id}."""
+
+    wbs_name: Optional[str] = None
+    wbs_short_name: Optional[str] = None
+    parent_wbs_id: Optional[str] = None
 
 
 class ActivityRow(BaseModel):
@@ -35,14 +53,24 @@ class ActivityRow(BaseModel):
     name: str
     duration_hrs: float
     wbs_id: Optional[str] = None
+    wbs_name: Optional[str] = None
+    wbs_short_name: Optional[str] = None
     calendar_id: Optional[str] = None
     early_start: Optional[float] = None
     early_finish: Optional[float] = None
     late_start: Optional[float] = None
     late_finish: Optional[float] = None
     total_float_hrs: Optional[float] = None
+    free_float_hrs: Optional[float] = None
     is_critical: bool = False
+    is_near_critical: bool = False
     is_milestone: bool = False
+    constraint_type: Optional[str] = None
+    constraint_date: Optional[float] = None
+    actual_start: Optional[float] = None
+    actual_finish: Optional[float] = None
+    remaining_duration_hrs: Optional[float] = None
+    percent_complete: Optional[float] = 0
 
 
 class RelationshipRow(BaseModel):
@@ -70,8 +98,19 @@ class DiagnosticsSummary(BaseModel):
     total_activities: int = 0
     critical_count: int = 0
     critical_pct: float = 0.0
+    near_critical_count: int = 0
     open_starts: int = 0
     open_ends: int = 0
+    high_float_count: int = 0
+    negative_float_count: int = 0
+    high_duration_count: int = 0
+    relationship_ratio: float = 0.0
+    lag_count: int = 0
+    lead_count: int = 0
+    sf_count: int = 0
+    hard_constraint_count: int = 0
+    dcma_pass_count: int = 0
+    dcma_total_checks: int = 14
 
 
 class DiagnosticsResult(BaseModel):
@@ -98,3 +137,29 @@ class ActivitiesPage(BaseModel):
 
     items: List[ActivityRow]
     total: int
+
+
+class BaselineInfo(BaseModel):
+    """Baseline schedule snapshot metadata."""
+
+    id: int
+    proj_id: str
+    baseline_number: int
+    name: Optional[str] = None
+    created_at: str
+
+
+class BaselineComparison(BaseModel):
+    """Comparison of one activity: baseline vs current values."""
+
+    task_id: str
+    name: str
+    bl_early_start: Optional[float] = None
+    bl_early_finish: Optional[float] = None
+    bl_duration_hrs: Optional[float] = None
+    cur_early_start: Optional[float] = None
+    cur_early_finish: Optional[float] = None
+    cur_duration_hrs: Optional[float] = None
+    start_variance: Optional[float] = None
+    finish_variance: Optional[float] = None
+    duration_variance: Optional[float] = None

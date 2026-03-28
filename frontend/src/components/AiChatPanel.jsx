@@ -5,10 +5,17 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+function generateSessionId() {
+    return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
+
 const QUICK_ACTIONS = [
-  { label: 'Summarize schedule', prompt: 'Briefly summarize this schedule: activity count, critical share, and main risks from the context.' },
-  { label: 'Explain critical path', prompt: 'Explain the critical path conceptually based on the activities and relationships in context. Do not invent task IDs.' },
-  { label: 'Reduce open starts', prompt: 'Suggest minimal JSON actions to reduce open-start activities (add a start milestone or predecessors where logical).' },
+  { label: 'Summarize', prompt: 'Briefly summarize this schedule: activity count, critical share, DCMA score, and main risks.' },
+  { label: 'Critical path', prompt: 'Explain the critical path: list the top 10 longest-duration critical activities and identify whether high critical % is from SS relationships, constraints, or other causes.' },
+  { label: 'DCMA review', prompt: 'Review this schedule against all DCMA 14-Point Assessment criteria. For each check, state pass/fail with the value and threshold. For failures, give specific corrective actions.' },
+  { label: 'Fix open ends', prompt: 'Identify activities with no predecessors or no successors. For each, suggest a specific relationship. Output JSON actions.' },
+  { label: 'Float analysis', prompt: 'Analyze float distribution: negative, zero, 1-5d, 5-20d, 20+d. Identify near-critical paths and which activities could become critical.' },
+  { label: 'Network analysis', prompt: 'Analyze the schedule network: critical path drivers, float consumption risks, logic gaps, relationship density, and overall health score 0-100.' },
 ]
 
 export default function AiChatPanel({
@@ -21,12 +28,16 @@ export default function AiChatPanel({
   onPendingPromptConsumed,
 }) {
   const [messages, setMessages] = useState([])
+  const [sessionId, setSessionId] = useState(null)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [autoApply, setAutoApply] = useState(false)
   const [lastPreview, setLastPreview] = useState(null)
   const [lastError, setLastError] = useState(null)
   const [needsKey, setNeedsKey] = useState(false)
+  const [selectedActions, setSelectedActions] = useState({})
+  const [applying, setApplying] = useState(false)
+  const [applyResult, setApplyResult] = useState(null)
   const messagesRef = useRef(messages)
   messagesRef.current = messages
   const runChatRef = useRef(null)
@@ -38,8 +49,52 @@ export default function AiChatPanel({
       setLastPreview(null)
       setLastError(null)
       setNeedsKey(false)
+      setSessionId(null)
+    } else {
+      setSessionId(generateSessionId())
     }
   }, [projId])
+
+  useEffect(() => {
+    if (lastPreview?.length) {
+      const sel = {}
+      lastPreview.forEach((_, i) => { sel[i] = true })
+      setSelectedActions(sel)
+    } else {
+      setSelectedActions({})
+    }
+    setApplyResult(null)
+  }, [lastPreview])
+
+  const applySelected = async () => {
+    if (!projId || !lastPreview?.length || applying) return
+    const toApply = lastPreview.filter((_, i) => selectedActions[i])
+    if (toApply.length === 0) return
+    setApplying(true)
+    setApplyResult(null)
+    try {
+      const res = await fetch(`${apiBase}/ai/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proj_id: projId, actions: toApply }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`)
+      setApplyResult({ ok: true, applied: data.applied || [], cpm_error: data.cpm_error })
+      if (data.applied?.length) {
+        onScheduleChanged?.()
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `Applied ${data.applied.length} action(s): ${data.applied.join(', ')}${data.cpm_error ? `\nCPM warning: ${data.cpm_error}` : '\nCPM recalculated successfully.'}`
+        }])
+      }
+      setLastPreview(null)
+    } catch (e) {
+      setApplyResult({ ok: false, error: e.message })
+    } finally {
+      setApplying(false)
+    }
+  }
 
   const runChat = useCallback(
     async (messageList) => {
@@ -55,8 +110,15 @@ export default function AiChatPanel({
             proj_id: projId,
             messages: messageList,
             auto_apply: autoApply,
+            session_id: sessionId,
           }),
         })
+        if (res.status === 404 || res.status === 501) {
+          setNeedsKey(false)
+          setLastError('AI assistant requires backend setup. See README.')
+          setLoading(false)
+          return
+        }
         const data = await res.json().catch(() => ({}))
         if (!res.ok) {
           const d = data.detail
@@ -80,7 +142,7 @@ export default function AiChatPanel({
         setLoading(false)
       }
     },
-    [apiBase, projId, autoApply, onScheduleChanged]
+    [apiBase, projId, autoApply, sessionId, onScheduleChanged]
   )
 
   runChatRef.current = runChat
@@ -141,6 +203,21 @@ export default function AiChatPanel({
       <aside className={`ai-drawer ${open ? 'open' : ''}`} aria-label="AI assistant">
         <div className="ai-drawer-header">
           <h2>Schedule assistant</h2>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ fontSize: '10px', padding: '2px 8px', marginLeft: 'auto', marginRight: '8px' }}
+            onClick={() => {
+              setSessionId(generateSessionId())
+              setMessages([])
+              setLastPreview(null)
+              setLastError(null)
+              setApplyResult(null)
+            }}
+            title="Start fresh conversation (resets cached context)"
+          >
+            New chat
+          </button>
           <button type="button" className="ai-drawer-close" onClick={() => onOpenChange(false)} aria-label="Close">
             ×
           </button>
@@ -173,6 +250,12 @@ export default function AiChatPanel({
               Auto-apply model actions (runs CPM after)
             </label>
 
+            {sessionId && messages.length > 0 ? (
+              <div style={{ padding: '0 16px 4px', fontSize: '9px', color: 'var(--text-4)', fontFamily: 'var(--font-mono)' }}>
+                Session: {sessionId.slice(5, 17)} · {messages.length} msg{messages.length !== 1 ? 's' : ''} · Context cached after 1st msg
+              </div>
+            ) : null}
+
             {needsKey ? (
               <div className="ai-banner danger" role="alert">
                 Set <code>ANTHROPIC_API_KEY</code> in <code>backend/.env</code> and restart the API.
@@ -202,10 +285,80 @@ export default function AiChatPanel({
             </div>
 
             {lastPreview?.length ? (
-              <details className="ai-preview" open>
-                <summary>Action preview ({lastPreview.length})</summary>
-                <pre>{JSON.stringify(lastPreview, null, 2)}</pre>
-              </details>
+              <div className="ai-preview" style={{ margin: '0 16px 8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <strong style={{ fontSize: '11px', color: 'var(--text-1)' }}>
+                    Actions ({Object.values(selectedActions).filter(Boolean).length}/{lastPreview.length} selected)
+                  </strong>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ fontSize: '10px', padding: '2px 8px' }}
+                      onClick={() => {
+                        const all = {}
+                        lastPreview.forEach((_, i) => { all[i] = true })
+                        setSelectedActions(all)
+                      }}
+                    >All</button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ fontSize: '10px', padding: '2px 8px' }}
+                      onClick={() => setSelectedActions({})}
+                    >None</button>
+                  </div>
+                </div>
+                <div style={{ maxHeight: '160px', overflow: 'auto' }}>
+                  {lastPreview.map((action, i) => (
+                    <label key={i} style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', fontSize: '10px', color: 'var(--text-2)', padding: '3px 0', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={!!selectedActions[i]}
+                        onChange={(e) => setSelectedActions(prev => ({ ...prev, [i]: e.target.checked }))}
+                        style={{ marginTop: '2px', accentColor: 'var(--indigo)' }}
+                      />
+                      <span style={{ fontFamily: 'var(--font-mono)', lineHeight: '1.3' }}>
+                        <strong style={{ color: 'var(--text-1)' }}>{action.op}</strong>
+                        {action.op === 'add_relationship' ? ` ${action.pred_id} → ${action.succ_id} (${action.rel_type || 'FS'})` : ''}
+                        {action.op === 'add_activity' ? ` ${action.task_id}: ${action.name || ''}` : ''}
+                        {action.op === 'modify_activity' ? ` ${action.task_id}` : ''}
+                        {action.op === 'delete_activity' ? ` ${action.task_id}` : ''}
+                        {action.op === 'delete_relationship' ? ` id=${action.id}` : ''}
+                        {action._reason ? <span style={{ color: 'var(--text-3)', display: 'block', marginLeft: '0' }}>{action._reason}</span> : null}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <div style={{ marginTop: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{ fontSize: '11px', padding: '5px 12px' }}
+                    onClick={applySelected}
+                    disabled={applying || Object.values(selectedActions).filter(Boolean).length === 0}
+                  >
+                    {applying ? 'Applying…' : `Apply ${Object.values(selectedActions).filter(Boolean).length} action(s)`}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{ fontSize: '10px', padding: '4px 8px' }}
+                    onClick={() => setLastPreview(null)}
+                  >Dismiss</button>
+                </div>
+                {applyResult?.ok ? (
+                  <div style={{ marginTop: '6px', fontSize: '10px', color: 'var(--emerald)' }}>
+                    ✓ Applied {applyResult.applied?.length || 0} action(s). CPM recalculated.
+                    {applyResult.cpm_error ? <span style={{ color: 'var(--amber)' }}> Warning: {applyResult.cpm_error}</span> : null}
+                  </div>
+                ) : null}
+                {applyResult && !applyResult.ok ? (
+                  <div style={{ marginTop: '6px', fontSize: '10px', color: 'var(--red)' }}>
+                    ✗ {applyResult.error}
+                  </div>
+                ) : null}
+              </div>
             ) : null}
 
             <div className="ai-compose">

@@ -3,6 +3,7 @@ import './App.css'
 import ActivityDetailsPanel from './components/ActivityDetailsPanel.jsx'
 import ActivityTable from './components/ActivityTable.jsx'
 import AiChatPanel from './components/AiChatPanel.jsx'
+import BaselinePanel from './components/BaselinePanel.jsx'
 import GanttView from './components/GanttView.jsx'
 import ScheduleHealth from './components/ScheduleHealth.jsx'
 import UploadPanel from './components/UploadPanel.jsx'
@@ -35,6 +36,7 @@ export default function App() {
   const [criticalOnly, setCriticalOnly] = useState(false)
   const [longestPathOnly, setLongestPathOnly] = useState(false)
   const [groupByWbs, setGroupByWbs] = useState(false)
+  const [wbsList, setWbsList] = useState([])
 
   const [selectedActivity, setSelectedActivity] = useState(null)
   const [splitPct, setSplitPct] = useState(58)
@@ -49,6 +51,7 @@ export default function App() {
 
   useLayoutEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
+    document.documentElement.style.colorScheme = theme === 'dark' ? 'dark' : 'light'
     localStorage.setItem('theme', theme)
   }, [theme])
 
@@ -69,12 +72,14 @@ export default function App() {
       setActivities([])
       setRelationships([])
       setDiagnostics(null)
+      setWbsList([])
       return
     }
-    const [aRes, rRes, dRes] = await Promise.all([
+    const [aRes, rRes, dRes, wRes] = await Promise.all([
       fetch(`${API}/projects/${encodeURIComponent(projId)}/activities`),
       fetch(`${API}/projects/${encodeURIComponent(projId)}/relationships`),
       fetch(`${API}/projects/${encodeURIComponent(projId)}/diagnostics`),
+      fetch(`${API}/projects/${encodeURIComponent(projId)}/wbs`),
     ])
     if (aRes.ok) {
       const a = await aRes.json()
@@ -82,6 +87,7 @@ export default function App() {
     }
     if (rRes.ok) setRelationships(await rRes.json())
     if (dRes.ok) setDiagnostics(await dRes.json())
+    if (wRes.ok) setWbsList(await wRes.json())
   }, [])
 
   const onScheduleChanged = useCallback(async () => {
@@ -241,6 +247,14 @@ export default function App() {
               <label>Open Ends</label>
               <strong>{openEnds != null ? openEnds : '—'}</strong>
             </div>
+            <div className="kpi" data-kpi="critical">
+              <label>DCMA Score</label>
+              <strong>{sum?.dcma_total_checks > 0 ? `${sum.dcma_pass_count}/${sum.dcma_total_checks}` : '—'}</strong>
+            </div>
+            <div className="kpi" data-kpi="openends">
+              <label>Near-Critical</label>
+              <strong>{sum?.near_critical_count != null ? sum.near_critical_count : '—'}</strong>
+            </div>
           </div>
         </div>
 
@@ -253,9 +267,25 @@ export default function App() {
 
       <main className="main">
         <div className="topbar">
-          <span className="topbar-title">Workspace</span>
+          <span className="topbar-title">{selected ? selected.name : 'P6 XER Analyzer'}</span>
+          {selected ? (
+            <span
+              style={{
+                fontSize: '10px',
+                color: 'var(--text-3)',
+                fontFamily: 'var(--font-mono)',
+                background: 'var(--surface-3)',
+                padding: '2px 8px',
+                borderRadius: 'var(--r-sm)',
+                border: '1px solid var(--border-1)',
+              }}
+            >
+              {selected.activity_count} act · {selected.relationship_count} rel
+            </span>
+          ) : null}
+          <div style={{ flex: 1 }} />
           <button type="button" className="btn-secondary" onClick={() => setBottomOpen((o) => !o)}>
-            {bottomOpen ? 'Hide' : 'Show'} bottom panel
+            {bottomOpen ? 'Hide panel' : 'Show panel'}
           </button>
           <button
             type="button"
@@ -346,9 +376,27 @@ export default function App() {
               >
                 Schedule Health
               </button>
+              <button
+                type="button"
+                className={bottomTab === 'baseline' ? 'active' : ''}
+                onClick={() => {
+                  setBottomTab('baseline')
+                  setBottomOpen(true)
+                }}
+              >
+                Baselines
+              </button>
             </div>
             <div className="bottom-panel-content">
-              {bottomTab === 'details' ? <ActivityDetailsPanel activity={selectedActivity} /> : null}
+              {bottomTab === 'details' ? (
+                <ActivityDetailsPanel
+                  activity={selectedActivity}
+                  projId={selectedProjectId}
+                  apiBase={API}
+                  onActivityUpdated={onScheduleChanged}
+                  wbsList={wbsList}
+                />
+              ) : null}
               {bottomTab === 'health' ? (
                 <ScheduleHealth
                   report={diagnostics}
@@ -356,7 +404,11 @@ export default function App() {
                   projId={selectedProjectId}
                   apiBase={API}
                   suggestionsRefreshKey={healthSuggestionsKey}
+                  onScheduleChanged={onScheduleChanged}
                 />
+              ) : null}
+              {bottomTab === 'baseline' ? (
+                <BaselinePanel projId={selectedProjectId} apiBase={API} />
               ) : null}
             </div>
           </div>
@@ -381,6 +433,10 @@ export default function App() {
           <div className="statusbar-item">
             Open Ends:{' '}
             <strong style={{ color: 'var(--emerald)' }}>{openEnds != null ? openEnds : '—'}</strong>
+          </div>
+          <div className="statusbar-item">
+            DCMA:{' '}
+            <strong style={{ color: 'var(--amber)' }}>{sum?.dcma_total_checks > 0 ? `${sum.dcma_pass_count}/${sum.dcma_total_checks}` : '—'}</strong>
           </div>
           <div className="statusbar-item">Offline · SQLite · CPM hours · 8 h/day</div>
         </div>
