@@ -1,24 +1,23 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
+import ActivityDetailsPanel from './components/ActivityDetailsPanel.jsx'
 import ActivityTable from './components/ActivityTable.jsx'
+import AiChatPanel from './components/AiChatPanel.jsx'
 import GanttView from './components/GanttView.jsx'
 import ScheduleHealth from './components/ScheduleHealth.jsx'
 import UploadPanel from './components/UploadPanel.jsx'
+import { buildDisplayRows } from './utils/displayRows.js'
 
 const API = '/api'
 
 function getInitialTheme() {
   const saved = localStorage.getItem('theme')
   if (saved === 'dark' || saved === 'light') return saved
-  if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    return 'dark'
-  }
-  return 'light'
+  return 'dark'
 }
 
 export default function App() {
   const [theme, setTheme] = useState(getInitialTheme)
-  const [tab, setTab] = useState('activities')
   const [projects, setProjects] = useState([])
   const [selectedProjectId, setSelectedProjectId] = useState(null)
   const [activities, setActivities] = useState([])
@@ -26,9 +25,29 @@ export default function App() {
   const [diagnostics, setDiagnostics] = useState(null)
   const [cpmBusy, setCpmBusy] = useState(false)
   const [cpmError, setCpmError] = useState(null)
-  const [ganttZoom, setGanttZoom] = useState('day')
+  const [ganttZoom, setGanttZoom] = useState('month')
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiPendingPrompt, setAiPendingPrompt] = useState(null)
+  const [healthSuggestionsKey, setHealthSuggestionsKey] = useState(0)
 
-  useEffect(() => {
+  const [sort, setSort] = useState({ key: 'task_id', dir: 'asc' })
+  const [filterSearch, setFilterSearch] = useState('')
+  const [criticalOnly, setCriticalOnly] = useState(false)
+  const [longestPathOnly, setLongestPathOnly] = useState(false)
+  const [groupByWbs, setGroupByWbs] = useState(false)
+
+  const [selectedActivity, setSelectedActivity] = useState(null)
+  const [splitPct, setSplitPct] = useState(58)
+  const [bottomTab, setBottomTab] = useState('details')
+  const [bottomOpen, setBottomOpen] = useState(true)
+
+  const tableScrollRef = useRef(null)
+  const ganttRef = useRef(null)
+  const syncScrollRef = useRef(false)
+  const dragSplitRef = useRef({ active: false, root: null })
+  const splitRootRef = useRef(null)
+
+  useLayoutEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem('theme', theme)
   }, [theme])
@@ -65,11 +84,48 @@ export default function App() {
     if (dRes.ok) setDiagnostics(await dRes.json())
   }, [])
 
+  const onScheduleChanged = useCallback(async () => {
+    await loadProjectData(selectedProjectId)
+    await refreshProjects()
+    setHealthSuggestionsKey((k) => k + 1)
+  }, [selectedProjectId, loadProjectData, refreshProjects])
+
   useEffect(() => {
     loadProjectData(selectedProjectId)
   }, [selectedProjectId, loadProjectData])
 
-  const onImported = async (data) => {
+  useEffect(() => {
+    const onPrompt = (e) => {
+      const p = e.detail?.prompt
+      if (p) setAiPendingPrompt(p)
+      setAiOpen(true)
+    }
+    window.addEventListener('ai-chat-prompt', onPrompt)
+    return () => window.removeEventListener('ai-chat-prompt', onPrompt)
+  }, [])
+
+  const displayRows = useMemo(
+    () =>
+      buildDisplayRows(activities, {
+        groupByWbs,
+        search: filterSearch,
+        criticalOnly,
+        longestPathOnly,
+        sort,
+      }),
+    [activities, groupByWbs, filterSearch, criticalOnly, longestPathOnly, sort],
+  )
+
+  const onTableScroll = useCallback((e) => {
+    if (syncScrollRef.current) return
+    syncScrollRef.current = true
+    ganttRef.current?.scrollToY(e.target.scrollTop)
+    requestAnimationFrame(() => {
+      syncScrollRef.current = false
+    })
+  }, [])
+
+  const handleImported = async (data) => {
     await refreshProjects()
     if (data?.proj_id) setSelectedProjectId(data.proj_id)
   }
@@ -109,6 +165,36 @@ export default function App() {
   const pctCrit = sum?.critical_pct != null ? `${sum.critical_pct.toFixed(1)}%` : '—'
   const openEnds = sum ? sum.open_starts + sum.open_ends : null
 
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!dragSplitRef.current.active) return
+      const root = dragSplitRef.current.root
+      if (!root) return
+      const rect = root.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const pct = (x / rect.width) * 100
+      setSplitPct(Math.min(85, Math.max(22, pct)))
+    }
+    const onUp = () => {
+      dragSplitRef.current.active = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [])
+
+  const onSplitterDown = (e) => {
+    e.preventDefault()
+    dragSplitRef.current = { active: true, root: splitRootRef.current }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -123,63 +209,192 @@ export default function App() {
             {theme === 'dark' ? 'Light' : 'Dark'}
           </button>
         </div>
-        <UploadPanel
-          onImported={onImported}
-          selectedProjectId={selectedProjectId}
-          onSelectProject={setSelectedProjectId}
-          projects={projects}
-          onRunCpm={runCpm}
-          cpmBusy={cpmBusy}
-          cpmError={cpmError}
-        />
-        <div className="kpi-grid">
-          <div className="kpi">
-            <label>Activities</label>
-            <strong>{selected?.activity_count ?? '—'}</strong>
+
+        <div className="sidebar-scroll">
+          <div className="sidebar-section" style={{ paddingTop: '8px' }}>
+            <div className="sidebar-section-label">Import</div>
+            <UploadPanel
+              onImported={handleImported}
+              selectedProjectId={selectedProjectId}
+              onSelectProject={setSelectedProjectId}
+              projects={projects}
+              onRunCpm={runCpm}
+              cpmBusy={cpmBusy}
+              cpmError={cpmError}
+            />
           </div>
-          <div className="kpi">
-            <label>Relationships</label>
-            <strong>{selected?.relationship_count ?? '—'}</strong>
-          </div>
-          <div className="kpi">
-            <label>% Critical</label>
-            <strong>{pctCrit}</strong>
-          </div>
-          <div className="kpi">
-            <label>Open ends</label>
-            <strong>{openEnds != null ? openEnds : '—'}</strong>
+
+          <div className="kpi-grid">
+            <div className="kpi" data-kpi="activities">
+              <label>Activities</label>
+              <strong>{selected?.activity_count ?? '—'}</strong>
+            </div>
+            <div className="kpi" data-kpi="relationships">
+              <label>Relationships</label>
+              <strong>{selected?.relationship_count ?? '—'}</strong>
+            </div>
+            <div className="kpi" data-kpi="critical">
+              <label>% Critical</label>
+              <strong>{pctCrit}</strong>
+            </div>
+            <div className="kpi" data-kpi="openends">
+              <label>Open Ends</label>
+              <strong>{openEnds != null ? openEnds : '—'}</strong>
+            </div>
           </div>
         </div>
-        <p style={{ fontSize: '0.8rem', color: 'var(--muted)', margin: 0 }}>
-          Offline · SQLite · CPM in hours; 8 h/day for day/date display
-        </p>
+
+        <div className="sidebar-footer">
+          Offline · SQLite · CPM in hours
+          <br />
+          8 h/day for date display
+        </div>
       </aside>
 
       <main className="main">
-        <nav className="tabs">
-          <button type="button" className={tab === 'activities' ? 'active' : ''} onClick={() => setTab('activities')}>
-            Activities
+        <div className="topbar">
+          <span className="topbar-title">Workspace</span>
+          <button type="button" className="btn-secondary" onClick={() => setBottomOpen((o) => !o)}>
+            {bottomOpen ? 'Hide' : 'Show'} bottom panel
           </button>
-          <button type="button" className={tab === 'gantt' ? 'active' : ''} onClick={() => setTab('gantt')}>
-            Gantt
-          </button>
-          <button type="button" className={tab === 'health' ? 'active' : ''} onClick={() => setTab('health')}>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={
+              bottomTab === 'health'
+                ? {
+                    borderColor: 'var(--indigo)',
+                    color: 'var(--indigo)',
+                    background: 'var(--indigo-dim)',
+                  }
+                : undefined
+            }
+            onClick={() => {
+              setBottomTab('health')
+              setBottomOpen(true)
+            }}
+          >
             Schedule Health
           </button>
-        </nav>
-        <div className="tab-panel">
-          {tab === 'activities' && <ActivityTable activities={activities} />}
-          {tab === 'gantt' && (
-            <GanttView
-              activities={activities}
-              relationships={relationships}
-              zoom={ganttZoom}
-              onZoomChange={setGanttZoom}
+          {cpmError ? <span className="topbar-err">{cpmError}</span> : null}
+        </div>
+
+        <div className="work-area">
+          <div
+            ref={splitRootRef}
+            className="split-grid"
+            style={{ gridTemplateColumns: `${splitPct}% 6px minmax(0, 1fr)` }}
+          >
+            <section className="split-pane" aria-label="Activity table">
+              <ActivityTable
+                displayRows={displayRows}
+                activitiesCount={activities.length}
+                setSort={setSort}
+                selectedId={selectedActivity ? String(selectedActivity.task_id) : null}
+                onSelectActivity={(a) => setSelectedActivity(a)}
+                filterSearch={filterSearch}
+                onFilterSearch={setFilterSearch}
+                criticalOnly={criticalOnly}
+                onCriticalOnly={setCriticalOnly}
+                longestPathOnly={longestPathOnly}
+                onLongestPathOnly={setLongestPathOnly}
+                groupByWbs={groupByWbs}
+                onGroupByWbs={setGroupByWbs}
+                tableScrollRef={tableScrollRef}
+                onTableScroll={onTableScroll}
+              />
+            </section>
+            <div
+              className="splitter"
+              role="separator"
+              aria-orientation="vertical"
+              tabIndex={0}
+              onMouseDown={onSplitterDown}
             />
-          )}
-          {tab === 'health' && <ScheduleHealth report={diagnostics} onExportCsv={exportCsv} />}
+            <section className="split-pane" aria-label="Gantt chart">
+              <GanttView
+                ref={ganttRef}
+                displayRows={displayRows}
+                relationships={relationships}
+                zoom={ganttZoom}
+                onZoomChange={setGanttZoom}
+                tableScrollRef={tableScrollRef}
+                syncScrollRef={syncScrollRef}
+              />
+            </section>
+          </div>
+
+          <div className={`bottom-panel ${bottomOpen ? 'open' : 'collapsed'}`}>
+            <div className="bottom-panel-tabs">
+              <button
+                type="button"
+                className={bottomTab === 'details' ? 'active' : ''}
+                onClick={() => {
+                  setBottomTab('details')
+                  setBottomOpen(true)
+                }}
+              >
+                Activity Details
+              </button>
+              <button
+                type="button"
+                className={bottomTab === 'health' ? 'active' : ''}
+                onClick={() => {
+                  setBottomTab('health')
+                  setBottomOpen(true)
+                }}
+              >
+                Schedule Health
+              </button>
+            </div>
+            <div className="bottom-panel-content">
+              {bottomTab === 'details' ? <ActivityDetailsPanel activity={selectedActivity} /> : null}
+              {bottomTab === 'health' ? (
+                <ScheduleHealth
+                  report={diagnostics}
+                  onExportCsv={exportCsv}
+                  projId={selectedProjectId}
+                  apiBase={API}
+                  suggestionsRefreshKey={healthSuggestionsKey}
+                />
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <div className="statusbar">
+          <div className="statusbar-item">
+            <div className="statusbar-dot" />
+            Online
+          </div>
+          <div className="statusbar-item">
+            Activities:{' '}
+            <strong style={{ color: 'var(--indigo)' }}>{selected?.activity_count ?? '—'}</strong>
+          </div>
+          <div className="statusbar-item">
+            Relationships:{' '}
+            <strong style={{ color: 'var(--purple)' }}>{selected?.relationship_count ?? '—'}</strong>
+          </div>
+          <div className="statusbar-item">
+            % Critical: <strong style={{ color: 'var(--amber)' }}>{pctCrit}</strong>
+          </div>
+          <div className="statusbar-item">
+            Open Ends:{' '}
+            <strong style={{ color: 'var(--emerald)' }}>{openEnds != null ? openEnds : '—'}</strong>
+          </div>
+          <div className="statusbar-item">Offline · SQLite · CPM hours · 8 h/day</div>
         </div>
       </main>
+
+      <AiChatPanel
+        open={aiOpen}
+        onOpenChange={setAiOpen}
+        projId={selectedProjectId}
+        apiBase={API}
+        onScheduleChanged={onScheduleChanged}
+        pendingPrompt={aiPendingPrompt}
+        onPendingPromptConsumed={() => setAiPendingPrompt(null)}
+      />
     </div>
   )
 }

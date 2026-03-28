@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import csv
+
+from dotenv import load_dotenv
+
+load_dotenv()
 import io
 from typing import Any, List, Optional
 
@@ -11,8 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from openpyxl import Workbook
 
+from ai_routes import router as ai_router
 from cpm_engine import run_cpm_for_project_rows
 from database import DEFAULT_DB_PATH, get_connection, init_db
+from deps import get_db
 from diagnostics import run_diagnostics
 from models import (
     ActivitiesPage,
@@ -27,6 +33,8 @@ from xer_parser import import_xer_to_sqlite
 
 app = FastAPI(title="Primavera P6 XER Local Analyzer", version="1.0.0")
 
+app.include_router(ai_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -39,13 +47,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-def get_db() -> Any:
-    """Return an initialized SQLite connection."""
-    conn = get_connection(DEFAULT_DB_PATH)
-    init_db(conn)
-    return conn
 
 
 @app.on_event("startup")

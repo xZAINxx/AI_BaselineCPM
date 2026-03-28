@@ -1,145 +1,193 @@
-import { useEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import gantt from 'dhtmlx-gantt'
 import 'dhtmlx-gantt/codebase/dhtmlxgantt.css'
+import { buildGanttPayload } from '../utils/ganttTasks.js'
+import { applyZoomPreset } from '../utils/ganttZoomPresets.js'
 
-const HOURS_PER_DAY = 8
-const BASE_MS = Date.UTC(2025, 0, 6, 8, 0, 0)
-
-function hourToStr(h) {
-  if (h == null || Number.isNaN(Number(h))) return '2025-01-06 08:00'
-  const ms = BASE_MS + Number(h) * 3600000
-  const d = new Date(ms)
-  const y = d.getUTCFullYear()
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
-  const day = String(d.getUTCDate()).padStart(2, '0')
-  const hh = String(d.getUTCHours()).padStart(2, '0')
-  const mm = String(d.getUTCMinutes()).padStart(2, '0')
-  return `${y}-${m}-${day} ${hh}:${mm}`
-}
-
-function predTypeToLinkType(predType) {
-  const t = (predType || 'FS').toUpperCase()
-  if (t === 'SS') return 1
-  if (t === 'FF') return 2
-  if (t === 'SF') return 3
-  return 0
-}
-
-function applyZoomPreset(level) {
-  if (level === 'day') {
-    gantt.config.scale_unit = 'day'
-    gantt.config.step = 1
-    gantt.config.date_scale = '%d %M'
-    gantt.config.subscales = [{ unit: 'hour', step: 8, date: '%H' }]
-  } else if (level === 'week') {
-    gantt.config.scale_unit = 'week'
-    gantt.config.step = 1
-    gantt.config.date_scale = 'Week %W'
-    gantt.config.subscales = [{ unit: 'day', step: 1, date: '%d %M' }]
-  } else {
-    gantt.config.scale_unit = 'month'
-    gantt.config.step = 1
-    gantt.config.date_scale = '%M %Y'
-    gantt.config.subscales = [{ unit: 'week', step: 1, date: 'W%W' }]
-  }
-  if (gantt.ext && gantt.ext.zoom && typeof gantt.ext.zoom.setLevel === 'function') {
-    try {
-      gantt.ext.zoom.setLevel(level)
-    } catch {
-      /* fall back to manual scales */
-    }
-  }
-}
-
-export default function GanttView({ activities, relationships, zoom, onZoomChange }) {
+const GanttView = forwardRef(function GanttView(
+  { displayRows, relationships, zoom, onZoomChange, tableScrollRef, syncScrollRef },
+  ref,
+) {
   const hostRef = useRef(null)
-  const inited = useRef(false)
   const [error, setError] = useState(null)
+  const ganttReadyRef = useRef(false)
+  const ignoreNextScrollRef = useRef(false)
+  const scrollEvRef = useRef(null)
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      scrollToY(y) {
+        if (!ganttReadyRef.current) return
+        try {
+          ignoreNextScrollRef.current = true
+          const cur = gantt.getScrollState()
+          gantt.scrollTo(cur.x, y)
+        } catch {
+          /* ignore */
+        }
+      },
+      getScrollY() {
+        try {
+          return gantt.getScrollState()?.y ?? 0
+        } catch {
+          return 0
+        }
+      },
+    }),
+    [],
+  )
 
   useEffect(() => {
-    if (!hostRef.current || inited.current) return
+    if (!displayRows?.length) return undefined
+    const el = hostRef.current
+    if (!el) return undefined
+
+    let cancelled = false
+    let raf2 = 0
+
     gantt.config.date_format = '%Y-%m-%d %H:%i'
     gantt.config.duration_unit = 'day'
     gantt.config.duration_step = 1
-    gantt.config.scale_height = 36
-    gantt.config.row_height = 28
+    gantt.config.scale_height = 32
+    gantt.config.row_height = 20
+    gantt.config.bar_height = 10
     gantt.config.link_line_width = 2
     gantt.config.show_links = true
     gantt.templates.task_class = function (_start, _end, task) {
       return task.critical ? 'critical_task' : ''
     }
-    gantt.init(hostRef.current)
-    inited.current = true
-    return () => {
+
+    gantt.config.dark = true
+    if (gantt.skins?.setActiveSkin) {
       try {
-        gantt.clearAll()
-        if (typeof gantt.destructor === 'function') gantt.destructor()
+        gantt.skins.setActiveSkin('dhtmlx_material')
+      } catch {
+        /* skin may be unavailable in this build */
+      }
+    }
+
+    try {
+      gantt.init(el)
+    } catch (e) {
+      console.error(e)
+      queueMicrotask(() => setError(e.message || 'Gantt init failed'))
+      return undefined
+    }
+
+    ganttReadyRef.current = true
+
+    if (scrollEvRef.current) {
+      gantt.detachEvent(scrollEvRef.current)
+      scrollEvRef.current = null
+    }
+    scrollEvRef.current = gantt.attachEvent('onGanttScroll', (left, top) => {
+      if (ignoreNextScrollRef.current) {
+        ignoreNextScrollRef.current = false
+        return
+      }
+      if (syncScrollRef) syncScrollRef.current = true
+      if (tableScrollRef?.current) {
+        tableScrollRef.current.scrollTop = top
+      }
+      requestAnimationFrame(() => {
+        if (syncScrollRef) syncScrollRef.current = false
+      })
+    })
+
+    const pushData = () => {
+      if (cancelled) return
+      if (!gantt.$data) return
+      try {
+        setError(null)
+        applyZoomPreset(zoom)
+        const payload = buildGanttPayload(displayRows, relationships)
+        if (typeof gantt.clearAll === 'function') {
+          gantt.clearAll()
+        }
+        gantt.parse(payload)
+        if (typeof gantt.render === 'function') {
+          gantt.render()
+        }
+      } catch (e) {
+        console.error(e)
+        setError(e.message || 'Gantt parse error')
+      }
+    }
+
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(pushData)
+    })
+
+    return () => {
+      cancelled = true
+      ganttReadyRef.current = false
+      if (scrollEvRef.current) {
+        try {
+          gantt.detachEvent(scrollEvRef.current)
+        } catch {
+          /* ignore */
+        }
+        scrollEvRef.current = null
+      }
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
+      try {
+        if (typeof gantt.destructor === 'function') {
+          gantt.destructor()
+        }
       } catch {
         /* ignore */
       }
-      inited.current = false
     }
-  }, [])
+  }, [displayRows, relationships, zoom, tableScrollRef, syncScrollRef])
 
-  useEffect(() => {
-    if (!inited.current) return
-    setError(null)
-    try {
-      applyZoomPreset(zoom)
-
-      const tasks = (activities || []).map((a) => {
-        const es = a.early_start
-        const dur = Number(a.duration_hrs) || 0
-        const start = es != null ? hourToStr(es) : hourToStr(0)
-        const isMile = a.is_milestone || dur <= 0
-        const durDays = dur / HOURS_PER_DAY
-        return {
-          id: String(a.task_id),
-          text: a.name || `Task ${a.task_id}`,
-          start_date: start,
-          duration: isMile ? 0 : Math.max(durDays, 0.01),
-          type: isMile ? 'milestone' : 'task',
-          critical: !!a.is_critical,
-        }
-      })
-
-      const links = (relationships || []).map((r, idx) => ({
-        id: String(r.id ?? idx),
-        source: String(r.pred_id ?? r.pred_task_id),
-        target: String(r.succ_id ?? r.succ_task_id),
-        type: predTypeToLinkType(r.rel_type ?? r.pred_type),
-      }))
-
-      gantt.clearAll()
-      gantt.parse({ data: tasks, links })
-    } catch (e) {
-      console.error(e)
-      setError(e.message || 'Gantt error')
-    }
-  }, [activities, relationships, zoom])
-
-  if (!activities?.length) {
-    return <p className="panel-placeholder">Import a project and run CPM to populate the Gantt chart.</p>
+  if (!displayRows?.length) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <p className="panel-placeholder gantt-placeholder">Import a project and run CPM to show the Gantt chart.</p>
+      </div>
+    )
   }
 
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div className="gantt-toolbar">
-        <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Zoom:</span>
+        <span
+          style={{
+            fontSize: '11px',
+            color: 'var(--text-3)',
+            fontWeight: 600,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+        >
+          Zoom
+        </span>
         {['day', 'week', 'month'].map((z) => (
           <button
             key={z}
             type="button"
             className="btn-secondary"
-            style={zoom === z ? { borderColor: 'var(--accent)', fontWeight: 600 } : undefined}
+            style={
+              zoom === z
+                ? {
+                    borderColor: 'var(--indigo)',
+                    color: 'var(--indigo)',
+                    background: 'var(--indigo-dim)',
+                  }
+                : undefined
+            }
             onClick={() => onZoomChange(z)}
           >
             {z.charAt(0).toUpperCase() + z.slice(1)}
           </button>
         ))}
+        {error ? <span style={{ color: 'var(--red)', fontSize: '11px' }}>{error}</span> : null}
       </div>
-      {error ? <p className="error">{error}</p> : null}
-      <div className="gantt-host" ref={hostRef} />
+      <div className="gantt-host" ref={hostRef} style={{ flex: 1, minHeight: 0 }} />
     </div>
   )
-}
+})
+
+export default GanttView

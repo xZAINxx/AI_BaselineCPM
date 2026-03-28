@@ -49,7 +49,7 @@ export default function UploadPanel({
   return (
     <div>
       <div className="upload-zone">
-        <div>Import Primavera .xer</div>
+        <div style={{ marginBottom: '6px' }}>Import Primavera .xer</div>
         {uploading ? <div className="upload-progress">Uploading…</div> : null}
         <input
           type="file"
@@ -68,44 +68,43 @@ export default function UploadPanel({
 
       {lastImport ? (
         <p className="import-summary">
-          Last import: {lastImport.activities_count} activities, {lastImport.relationships_count} relationships
-          {lastImport.calendars_count ? `, ${lastImport.calendars_count} calendars` : ''}.
+          ✓ {lastImport.activities_count} activities · {lastImport.relationships_count} rels
+          {lastImport.calendars_count ? ` · ${lastImport.calendars_count} cals` : ''}
         </p>
       ) : null}
 
-      <label style={{ display: 'block', marginTop: '0.75rem', fontSize: '0.85rem' }}>
-        Active project
+      <div style={{ padding: '8px 0 6px' }}>
         <select
           className="project-select"
           value={selectedProjectId || ''}
           onChange={(e) => onSelectProject(e.target.value || null)}
         >
-          <option value="">— Select —</option>
+          <option value="">— Select project —</option>
           {projects.map((p) => (
             <option key={p.proj_id} value={p.proj_id}>
               {p.name} ({p.activity_count} act.)
             </option>
           ))}
         </select>
-      </label>
+      </div>
 
       <button
         type="button"
         className="btn-primary"
-        style={{ width: '100%' }}
+        style={{ width: '100%', marginTop: '4px' }}
         disabled={!selectedProjectId || cpmBusy}
         onClick={() => onRunCpm()}
       >
-        {cpmBusy ? 'Running CPM…' : 'Run CPM'}
+        {cpmBusy ? 'Running CPM…' : '▶ Run CPM'}
       </button>
       {cpmError ? <p className="error">{cpmError}</p> : null}
 
-      <div className="upload-exports" style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+      <div className="upload-exports">
         <button type="button" className="btn-secondary" disabled={!selectedProjectId} onClick={exportXlsx}>
-          Export activities (.xlsx)
+          ↓ Export XLSX
         </button>
         <button type="button" className="btn-secondary" disabled={!selectedProjectId} onClick={exportCsv}>
-          Export diagnostics (.csv)
+          ↓ Export CSV
         </button>
       </div>
     </div>
