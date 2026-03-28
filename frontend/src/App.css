@@ -1,0 +1,347 @@
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background: var(--bg-sidebar, var(--surface));
+  border-right: 1px solid var(--border);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sidebar-header h1 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.theme-toggle {
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.theme-toggle:hover {
+  border-color: var(--accent);
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.kpi {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+}
+
+.kpi label {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.kpi strong {
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0 0.5rem;
+}
+
+.tabs button {
+  padding: 0.75rem 1.1rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.tab-panel {
+  flex: 1;
+  padding: 1rem;
+  overflow: auto;
+  min-height: 0;
+}
+
+.panel-placeholder {
+  color: var(--muted);
+  padding: 2rem;
+  text-align: center;
+}
+
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.upload-zone input[type='file'] {
+  margin-top: 0.5rem;
+  max-width: 100%;
+}
+
+.btn-primary {
+  margin-top: 0.75rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 6px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.btn-secondary:hover {
+  border-color: var(--accent);
+}
+
+.project-select {
+  width: 100%;
+  padding: 0.45rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.error {
+  color: var(--critical);
+  font-size: 0.85rem;
+}
+
+.activity-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: calc(100vh - 140px);
+}
+
+.activity-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.activity-table th,
+.activity-table td {
+  padding: 0.45rem 0.55rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.activity-table th {
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.activity-table tbody tr:nth-child(even) {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme='dark'] .activity-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.activity-table tr.critical {
+  background: rgba(192, 57, 43, 0.12) !important;
+}
+
+.table-filters {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.table-filters input {
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  min-width: 200px;
+}
+
+.diagnostics-summary {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.diagnostics-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: calc(100vh - 200px);
+  overflow: auto;
+}
+
+.diagnostics-list li {
+  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.diagnostics-list .sev-warning {
+  border-left: 3px solid #e67e22;
+}
+
+.diagnostics-list .sev-info {
+  border-left: 3px solid var(--accent);
+}
+
+.diagnostics-list .sev-error {
+  border-left: 3px solid var(--critical);
+}
+
+.gantt-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.gantt-host {
+  height: calc(100vh - 200px);
+  min-height: 360px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.upload-progress {
+  font-size: 0.85rem;
+  color: var(--accent);
+  margin: 0.35rem 0;
+}
+
+.import-summary {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.5rem 0 0;
+}
+
+.health-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+}
+
+.health-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+}
+
+.health-card label {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.health-card strong {
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.health-banner {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid var(--warning);
+  color: var(--text);
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+.health-group-title {
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.95rem;
+}
+
+.health-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  margin-right: 0.35rem;
+}
+
+/* dhtmlx critical task styling */
+.gantt_task_line.critical_task {
+  background-color: var(--critical) !important;
+  border-color: #922b21 !important;
+}
+
+.gantt_task_progress.critical_task {
+  background-color: rgba(0, 0, 0, 0.2) !important;
+}
