@@ -158,10 +158,12 @@ def normalize_constraint_type(raw: str) -> Optional[str]:
 
 def parse_constraint_date(raw: str, hours_per_day: float = 8.0) -> Optional[float]:
     """
-    Parse P6 constraint date to hours from time 0.
+    Parse P6 constraint date to hours from the reference point.
 
-    P6 stores dates as ISO strings or days since epoch. If numeric, assume hours.
+    Tries numeric (already hours) first, then common P6 date formats.
     """
+    from constants import REF_DATETIME
+
     if not raw or raw.strip() == "":
         return None
     raw = raw.strip()
@@ -169,6 +171,20 @@ def parse_constraint_date(raw: str, hours_per_day: float = 8.0) -> Optional[floa
         return float(raw)
     except ValueError:
         pass
+
+    _DATE_FORMATS = (
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%d-%b-%y",
+        "%Y-%m-%d",
+    )
+    for fmt in _DATE_FORMATS:
+        try:
+            dt = datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+            delta = dt - REF_DATETIME
+            return delta.total_seconds() / 3600.0
+        except ValueError:
+            continue
     return None
 
 

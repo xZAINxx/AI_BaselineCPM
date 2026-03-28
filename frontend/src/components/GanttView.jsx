@@ -2,9 +2,10 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import gantt from 'dhtmlx-gantt'
 import { buildGanttPayload } from '../utils/ganttTasks.js'
 import { applyZoomPreset } from '../utils/ganttZoomPresets.js'
+import { REF_MS } from '../utils/constants.js'
 
 const GanttView = forwardRef(function GanttView(
-  { displayRows, relationships, zoom, onZoomChange, tableScrollRef, syncScrollRef },
+  { displayRows, relationships, zoom, onZoomChange, tableScrollRef, syncScrollRef, onTaskClick },
   ref,
 ) {
   const hostRef = useRef(null)
@@ -12,6 +13,9 @@ const GanttView = forwardRef(function GanttView(
   const readyRef = useRef(false)
   const scrollEvRef = useRef(null)
   const ignoreNextScrollRef = useRef(false)
+  const onTaskClickRef = useRef(onTaskClick)
+  onTaskClickRef.current = onTaskClick
+  const todayMarkerRef = useRef(null)
 
   /* ── expose scroll helpers ── */
   useImperativeHandle(ref, () => ({
@@ -58,7 +62,7 @@ const GanttView = forwardRef(function GanttView(
     gantt.config.drag_resize = false
     gantt.config.drag_links = false
     gantt.config.drag_progress = false
-    gantt.config.show_progress = false
+    gantt.config.show_progress = true
     gantt.templates.task_text = (_start, _end, task) => {
       if (!task) return ''
       const raw = String(task.text ?? task.id ?? '').trim()
@@ -96,6 +100,11 @@ const GanttView = forwardRef(function GanttView(
       requestAnimationFrame(() => {
         if (syncScrollRef) syncScrollRef.current = false
       })
+    })
+
+    gantt.attachEvent('onTaskClick', (id) => {
+      onTaskClickRef.current?.(id)
+      return true
     })
 
     return () => {
@@ -136,10 +145,39 @@ const GanttView = forwardRef(function GanttView(
       if (!readyRef.current) return
       try {
         setError(null)
+
+        let minH = Infinity, maxH = -Infinity
+        for (const row of displayRows) {
+          if (row.kind !== 'activity') continue
+          const a = row.activity
+          if (a.early_start != null && Number.isFinite(Number(a.early_start))) minH = Math.min(minH, Number(a.early_start))
+          if (a.early_finish != null && Number.isFinite(Number(a.early_finish))) maxH = Math.max(maxH, Number(a.early_finish))
+        }
+        if (Number.isFinite(minH) && Number.isFinite(maxH)) {
+          const PAD_BEFORE = 14 * 24
+          const PAD_AFTER = 28 * 24
+          gantt.config.start_date = new Date(REF_MS + (minH - PAD_BEFORE) * 3600000)
+          gantt.config.end_date = new Date(REF_MS + (maxH + PAD_AFTER) * 3600000)
+        } else {
+          gantt.config.start_date = new Date(2025, 0, 1)
+          gantt.config.end_date = new Date(2026, 2, 1)
+        }
+
         applyZoomPreset(zoom)
         const payload = buildGanttPayload(displayRows, relationships)
+        if (todayMarkerRef.current != null) {
+          try { gantt.deleteMarker(todayMarkerRef.current) } catch { /* ignore */ }
+          todayMarkerRef.current = null
+        }
         gantt.clearAll()
         gantt.parse(payload)
+        try {
+          todayMarkerRef.current = gantt.addMarker({
+            start_date: new Date(),
+            css: 'today',
+            text: 'Today',
+          })
+        } catch { /* ignore */ }
         try {
           gantt.sort('start_date', false)
         } catch {

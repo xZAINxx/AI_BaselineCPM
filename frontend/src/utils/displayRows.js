@@ -16,10 +16,10 @@ export function wbsBandColor(level) {
 
 /**
  * @param {Array} activities
- * @param {{ groupByWbs: boolean, search: string, criticalOnly: boolean, longestPathOnly: boolean, sort: { key: string, dir: string } }} opts
+ * @param {{ groupByWbs: boolean, search: string, criticalOnly: boolean, longestPathOnly: boolean, sort: { key: string, dir: string }, criticalPath?: string[] }} opts
  */
 export function buildDisplayRows(activities, opts) {
-  const { groupByWbs, search, criticalOnly, longestPathOnly, sort } = opts
+  const { groupByWbs, search, criticalOnly, longestPathOnly, sort, criticalPath } = opts
   let rows = [...(activities || [])]
 
   const s = (search || '').trim().toLowerCase()
@@ -29,7 +29,14 @@ export function buildDisplayRows(activities, opts) {
     )
   }
   if (criticalOnly) rows = rows.filter((a) => a.is_critical)
-  if (longestPathOnly) rows = rows.filter((a) => a.is_critical)
+  if (longestPathOnly) {
+    if (criticalPath && criticalPath.length > 0) {
+      const pathSet = new Set(criticalPath.map(String))
+      rows = rows.filter((a) => pathSet.has(String(a.task_id)))
+    } else {
+      rows = rows.filter((a) => a.is_critical)
+    }
+  }
 
   const wbsNameMap = new Map()
   for (const a of rows) {

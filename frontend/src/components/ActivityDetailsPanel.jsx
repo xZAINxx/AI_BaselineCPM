@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-
-const HOURS_PER_DAY = 8
-
-const REF_MS = Date.UTC(2025, 0, 6, 8, 0, 0)
+import { HOURS_PER_DAY, REF_MS } from '../utils/constants.js'
 
 function hourToDateStr(h) {
   if (h == null || Number.isNaN(Number(h))) return '—'
@@ -15,11 +12,13 @@ function fmtHr(v) {
   return Number(v).toFixed(2)
 }
 
-export default function ActivityDetailsPanel({ activity, projId, apiBase = '/api', onActivityUpdated, wbsList = [] }) {
+export default function ActivityDetailsPanel({ activity, projId, apiBase = '/api', onActivityUpdated, wbsList = [], relationships = [], activities = [] }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+  const [addPred, setAddPred] = useState({ id: '', type: 'FS', lag: 0 })
+  const [addSucc, setAddSucc] = useState({ id: '', type: 'FS', lag: 0 })
 
   useEffect(() => {
     setEditing(false)
@@ -262,6 +261,100 @@ export default function ActivityDetailsPanel({ activity, projId, apiBase = '/api
           </div>
         ) : null}
       </div>
+
+      {/* Relationships */}
+      {activity && projId && (() => {
+        const tid = String(activity.task_id)
+        const preds = relationships.filter((r) => String(r.succ_id) === tid)
+        const succs = relationships.filter((r) => String(r.pred_id) === tid)
+        const actMap = new Map(activities.map((a) => [String(a.task_id), a.name || '']))
+
+        const deleteRel = async (relId) => {
+          try {
+            await fetch(`${apiBase}/ai/projects/${encodeURIComponent(projId)}/relationships/${relId}`, { method: 'DELETE' })
+            onActivityUpdated?.()
+          } catch { /* ignore */ }
+        }
+
+        const addRel = async (predId, succId, relType, lag) => {
+          try {
+            await fetch(`${apiBase}/ai/projects/${encodeURIComponent(projId)}/relationships`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pred_id: predId, succ_id: succId, rel_type: relType, lag_hrs: Number(lag) || 0 }),
+            })
+            onActivityUpdated?.()
+          } catch { /* ignore */ }
+        }
+
+        return (
+          <div style={{ marginTop: '16px' }}>
+            <h4 style={{ fontSize: '11px', color: 'var(--text-2)', margin: '0 0 6px', fontWeight: 700 }}>Predecessors ({preds.length})</h4>
+            {preds.length > 0 ? (
+              <table className="activity-table" style={{ fontSize: '10px', marginBottom: '6px' }}>
+                <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Lag</th><th /></tr></thead>
+                <tbody>
+                  {preds.map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.pred_id}</td>
+                      <td>{actMap.get(String(r.pred_id)) || ''}</td>
+                      <td>{r.rel_type}</td>
+                      <td>{r.lag_hrs}</td>
+                      <td><button type="button" className="btn-secondary" style={{ fontSize: '9px', padding: '1px 5px', color: 'var(--red)' }} onClick={() => deleteRel(r.id)}>×</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <p style={{ fontSize: '10px', color: 'var(--text-3)', margin: '0 0 6px' }}>None</p>}
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center', fontSize: '10px', marginBottom: '12px' }}>
+              <select value={addPred.id} onChange={(e) => setAddPred((p) => ({ ...p, id: e.target.value }))} style={{ fontSize: '10px', maxWidth: '120px' }}>
+                <option value="">Pred ID…</option>
+                {activities.filter((a) => String(a.task_id) !== tid).map((a) => (
+                  <option key={a.task_id} value={a.task_id}>{a.task_id}</option>
+                ))}
+              </select>
+              <select value={addPred.type} onChange={(e) => setAddPred((p) => ({ ...p, type: e.target.value }))} style={{ fontSize: '10px', width: '50px' }}>
+                {['FS', 'SS', 'FF', 'SF'].map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <input type="number" value={addPred.lag} onChange={(e) => setAddPred((p) => ({ ...p, lag: e.target.value }))} style={{ fontSize: '10px', width: '45px' }} placeholder="Lag" />
+              <button type="button" className="btn-secondary" style={{ fontSize: '9px', padding: '2px 6px' }} disabled={!addPred.id}
+                onClick={() => { addRel(addPred.id, tid, addPred.type, addPred.lag); setAddPred({ id: '', type: 'FS', lag: 0 }) }}>Add</button>
+            </div>
+
+            <h4 style={{ fontSize: '11px', color: 'var(--text-2)', margin: '0 0 6px', fontWeight: 700 }}>Successors ({succs.length})</h4>
+            {succs.length > 0 ? (
+              <table className="activity-table" style={{ fontSize: '10px', marginBottom: '6px' }}>
+                <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Lag</th><th /></tr></thead>
+                <tbody>
+                  {succs.map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.succ_id}</td>
+                      <td>{actMap.get(String(r.succ_id)) || ''}</td>
+                      <td>{r.rel_type}</td>
+                      <td>{r.lag_hrs}</td>
+                      <td><button type="button" className="btn-secondary" style={{ fontSize: '9px', padding: '1px 5px', color: 'var(--red)' }} onClick={() => deleteRel(r.id)}>×</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <p style={{ fontSize: '10px', color: 'var(--text-3)', margin: '0 0 6px' }}>None</p>}
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center', fontSize: '10px' }}>
+              <select value={addSucc.id} onChange={(e) => setAddSucc((p) => ({ ...p, id: e.target.value }))} style={{ fontSize: '10px', maxWidth: '120px' }}>
+                <option value="">Succ ID…</option>
+                {activities.filter((a) => String(a.task_id) !== tid).map((a) => (
+                  <option key={a.task_id} value={a.task_id}>{a.task_id}</option>
+                ))}
+              </select>
+              <select value={addSucc.type} onChange={(e) => setAddSucc((p) => ({ ...p, type: e.target.value }))} style={{ fontSize: '10px', width: '50px' }}>
+                {['FS', 'SS', 'FF', 'SF'].map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <input type="number" value={addSucc.lag} onChange={(e) => setAddSucc((p) => ({ ...p, lag: e.target.value }))} style={{ fontSize: '10px', width: '45px' }} placeholder="Lag" />
+              <button type="button" className="btn-secondary" style={{ fontSize: '9px', padding: '2px 6px' }} disabled={!addSucc.id}
+                onClick={() => { addRel(tid, addSucc.id, addSucc.type, addSucc.lag); setAddSucc({ id: '', type: 'FS', lag: 0 }) }}>Add</button>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

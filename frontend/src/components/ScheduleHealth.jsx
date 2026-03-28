@@ -353,6 +353,52 @@ export default function ScheduleHealth({
             </div>
           ) : null}
 
+          {report?.dcma_checks ? (
+            <div style={{ marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '12px', color: 'var(--text-2)', marginBottom: '8px', fontWeight: 600 }}>DCMA 14-Point Breakdown</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '6px' }}>
+                {[
+                  ['missing_predecessors', 'Missing Predecessors'],
+                  ['missing_successors', 'Missing Successors'],
+                  ['high_float', 'High Float'],
+                  ['negative_float', 'Negative Float'],
+                  ['high_duration', 'High Duration'],
+                  ['hard_constraints', 'Hard Constraints'],
+                  ['relationship_ratio', 'Relationship Ratio'],
+                  ['lags', 'Lags'],
+                  ['leads', 'Leads'],
+                  ['sf_relationships', 'SF Relationships'],
+                  ['critical_path_ratio', 'Critical Path Ratio'],
+                  ['invalid_dates', 'Invalid Dates'],
+                  ['open_starts', 'Open Starts'],
+                  ['open_ends', 'Open Ends'],
+                ].map(([key, label]) => {
+                  const pass = report.dcma_checks[key]
+                  return (
+                    <div
+                      key={key}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 'var(--r-md)',
+                        border: `1.5px solid ${pass ? 'var(--emerald)' : 'var(--red)'}`,
+                        background: 'var(--surface-2)',
+                        fontSize: '10px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
+                        <span style={{ fontSize: '13px' }}>{pass ? '✓' : '✗'}</span>
+                        <span style={{ color: pass ? 'var(--emerald)' : 'var(--red)', fontWeight: 600 }}>
+                          {pass ? 'PASS' : 'FAIL'}
+                        </span>
+                      </div>
+                      <div style={{ color: 'var(--text-2)', lineHeight: '1.3' }}>{label}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
+
           <div className={`health-summary-cards${warnCards ? ' has-warnings' : ''}`}>
             <div className={`health-card${summary.open_starts > 0 ? ' health-card-warn' : ''}`}>
               <label>Total activities</label>

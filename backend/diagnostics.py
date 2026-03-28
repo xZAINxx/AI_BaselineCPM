@@ -11,9 +11,10 @@ from typing import Dict, List, Set
 
 from models import DiagnosticsResult, DiagnosticsSummary, Finding
 
+from constants import NEAR_CRIT_THRESHOLD
+
 MAX_FINDINGS = 500
 EXCESSIVE_DURATION_HRS = 2000.0
-NEAR_CRIT_THRESHOLD = 40.0  # 5 days * 8 hours
 DCMA_HIGH_FLOAT_HRS = 352.0  # 44 days * 8 hours
 DCMA_HIGH_DURATION_HRS = 352.0  # 44 days * 8 hours
 
@@ -334,4 +335,7 @@ def run_diagnostics(
         dcma_total_checks=14,
     )
 
-    return DiagnosticsResult(findings=findings, summary=summary, truncated=truncated)
+    return DiagnosticsResult(
+        findings=findings, summary=summary, truncated=truncated,
+        dcma_checks=dcma_results["checks"],
+    )

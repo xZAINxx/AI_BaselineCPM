@@ -24,7 +24,7 @@ from openpyxl.utils import get_column_letter
 from ai_routes import router as ai_router
 from cpm_engine import run_cpm_for_project_rows
 from database import DEFAULT_DB_PATH, get_connection, init_db
-from deps import get_db
+from deps import fetch_activities, fetch_relationships, get_db
 from diagnostics import run_diagnostics
 from models import (
     ActivitiesPage,
@@ -117,35 +117,6 @@ def list_projects() -> List[ProjectSummary]:
         conn.close()
 
 
-def _fetch_activities(conn: Any, proj_id: str) -> List[dict]:
-    cur = conn.cursor()
-    cur.execute(
-        """SELECT a.proj_id, a.task_id, a.name, a.duration_hrs, a.wbs_id, a.calendar_id,
-           a.early_start, a.early_finish, a.late_start, a.late_finish, a.total_float_hrs,
-           a.free_float_hrs, a.is_critical, a.is_near_critical, a.is_milestone,
-           a.constraint_type, a.constraint_date,
-           a.actual_start, a.actual_finish, a.remaining_duration_hrs, a.percent_complete,
-           w.wbs_name, w.wbs_short_name
-           FROM activities a
-           LEFT JOIN wbs w ON a.proj_id = w.proj_id AND a.wbs_id = w.wbs_id
-           WHERE a.proj_id = ? ORDER BY a.task_id""",
-        (proj_id,),
-    )
-    cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
-
-
-def _fetch_relationships(conn: Any, proj_id: str) -> List[dict]:
-    cur = conn.cursor()
-    cur.execute(
-        """SELECT id, pred_id, succ_id, rel_type, lag_hrs
-           FROM relationships WHERE proj_id = ?""",
-        (proj_id,),
-    )
-    cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
-
-
 def _sort_activities(
     items: List[ActivityRow],
     sort_by: Optional[str],
@@ -182,7 +153,7 @@ def get_activities(
         cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
         if not cur.fetchone():
             raise HTTPException(404, "Project not found")
-        rows = _fetch_activities(conn, proj_id)
+        rows = fetch_activities(conn, proj_id)
     finally:
         conn.close()
 
@@ -236,7 +207,7 @@ def get_relationships(proj_id: str) -> List[RelationshipRow]:
         cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
         if not cur.fetchone():
             raise HTTPException(404, "Project not found")
-        raw = _fetch_relationships(conn, proj_id)
+        raw = fetch_relationships(conn, proj_id)
     finally:
         conn.close()
     return [
@@ -325,6 +296,28 @@ def update_wbs(proj_id: str, wbs_id: str, body: WbsUpdateBody) -> dict:
         conn.close()
 
 
+@app.delete("/api/projects/{proj_id}")
+def delete_project(proj_id: str) -> dict:
+    """Delete a project and all related data."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Project not found")
+        cur.execute("DELETE FROM baseline_activities WHERE baseline_id IN (SELECT id FROM baselines WHERE proj_id = ?)", (proj_id,))
+        cur.execute("DELETE FROM baselines WHERE proj_id = ?", (proj_id,))
+        cur.execute("DELETE FROM relationships WHERE proj_id = ?", (proj_id,))
+        cur.execute("DELETE FROM activities WHERE proj_id = ?", (proj_id,))
+        cur.execute("DELETE FROM calendars WHERE proj_id = ?", (proj_id,))
+        cur.execute("DELETE FROM wbs WHERE proj_id = ?", (proj_id,))
+        cur.execute("DELETE FROM projects WHERE proj_id = ?", (proj_id,))
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
 @app.post("/api/projects/{proj_id}/cpm", response_model=CpmResult)
 def run_cpm(proj_id: str) -> CpmResult:
     conn = get_db()
@@ -333,8 +326,8 @@ def run_cpm(proj_id: str) -> CpmResult:
         cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
         if not cur.fetchone():
             raise HTTPException(404, "Project not found")
-        acts = _fetch_activities(conn, proj_id)
-        rels = _fetch_relationships(conn, proj_id)
+        acts = fetch_activities(conn, proj_id)
+        rels = fetch_relationships(conn, proj_id)
         err, results, proj_end, critical_path = run_cpm_for_project_rows(acts, rels)
         if err:
             return CpmResult(
@@ -389,27 +382,33 @@ def get_diagnostics(
         cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
         if not cur.fetchone():
             raise HTTPException(404, "Project not found")
-        acts = _fetch_activities(conn, proj_id)
-        rels = _fetch_relationships(conn, proj_id)
+        acts = fetch_activities(conn, proj_id)
+        rels = fetch_relationships(conn, proj_id)
     finally:
         conn.close()
     return run_diagnostics(proj_id, acts, rels, hours_per_day=hours_per_day)
 
 
-def _hours_to_date_str(hrs: Optional[float], ref_ms: int = 1736150400000) -> str:
+def _hours_to_date_str(hrs: Optional[float], ref_ms: int = None) -> str:
     """Convert hours from ref point to DD-MMM-YY format."""
+    from constants import REF_MS as _REF_MS
     if hrs is None:
         return ""
-    from datetime import datetime, timezone
+    if ref_ms is None:
+        ref_ms = _REF_MS
+    from datetime import datetime as _dt, timezone as _tz
     ms = ref_ms + int(hrs * 3600000)
-    dt = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+    dt = _dt.fromtimestamp(ms / 1000, tz=_tz.utc)
     return dt.strftime("%d-%b-%y").upper()
 
 
-def _hours_to_days(hrs: Optional[float], hours_per_day: float = 8.0) -> Optional[float]:
+def _hours_to_days(hrs: Optional[float], hours_per_day: float = None) -> Optional[float]:
     """Convert hours to working days."""
+    from constants import HOURS_PER_DAY as _HPD
     if hrs is None:
         return None
+    if hours_per_day is None:
+        hours_per_day = _HPD
     return round(hrs / hours_per_day, 2)
 
 
@@ -423,7 +422,7 @@ def export_activities_xlsx(proj_id: str) -> Response:
         if not proj_row:
             raise HTTPException(404, "Project not found")
         proj_name = proj_row[0] or proj_id
-        acts = _fetch_activities(conn, proj_id)
+        acts = fetch_activities(conn, proj_id)
         # Build WBS name map
         cur.execute("SELECT wbs_id, wbs_name, wbs_short_name FROM wbs WHERE proj_id = ?", (proj_id,))
         wbs_map = {}
@@ -432,8 +431,8 @@ def export_activities_xlsx(proj_id: str) -> Response:
     finally:
         conn.close()
 
-    HPD = 8.0
-    REF = datetime(2025, 1, 6, 8, 0, 0)
+    from constants import HOURS_PER_DAY as HPD, REF_DATETIME
+    REF = REF_DATETIME.replace(tzinfo=None)
 
     def h2date(h):
         if h is None:
@@ -577,8 +576,8 @@ def export_diagnostics_csv(
         cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
         if not cur.fetchone():
             raise HTTPException(404, "Project not found")
-        acts = _fetch_activities(conn, proj_id)
-        rels = _fetch_relationships(conn, proj_id)
+        acts = fetch_activities(conn, proj_id)
+        rels = fetch_relationships(conn, proj_id)
     finally:
         conn.close()
 

@@ -235,10 +235,13 @@
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
-.upload-zone:hover {
+.upload-zone:hover, .upload-zone-active {
   border-color: var(--indigo);
   background: var(--indigo-dim);
   color: var(--text-2);
+}
+.upload-zone-active {
+  box-shadow: 0 0 12px var(--indigo-glow, rgba(99,102,241,0.25));
 }
 .upload-zone input[type='file'] {
   margin-top: 8px;
@@ -608,6 +611,34 @@
 [data-theme='light'] .wbs-band td {
   color: var(--text-1);
 }
+
+.vrow {
+  font-size: 11px;
+  line-height: 30px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--border-1);
+  white-space: nowrap;
+}
+.vrow.selected {
+  background: var(--indigo-dim);
+}
+.vrow.critical {
+  color: var(--red);
+}
+.wbs-band-v {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.9);
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+}
+.wbs-band-v.wbs-l1 { background: #8B1A1A; }
+.wbs-band-v.wbs-l2 { background: #1F3864; }
+.wbs-band-v.wbs-l3 { background: #2F5597; }
 
 /* ── BADGES ── */
 .badge {
@@ -1401,6 +1432,45 @@ select.p6-detail-input {
   word-break: break-word;
   color: var(--text-1);
 }
+
+.ai-markdown {
+  white-space: normal;
+}
+.ai-markdown h1, .ai-markdown h2, .ai-markdown h3, .ai-markdown h4 {
+  margin: 0.6em 0 0.3em;
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 700;
+}
+.ai-markdown h1 { font-size: 14px; }
+.ai-markdown h2 { font-size: 13px; }
+.ai-markdown p { margin: 0.3em 0; }
+.ai-markdown ul, .ai-markdown ol { margin: 0.3em 0; padding-left: 1.4em; }
+.ai-markdown li { margin: 0.15em 0; }
+.ai-markdown code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--surface-2);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.ai-markdown pre {
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+  padding: 8px 10px;
+  overflow-x: auto;
+  margin: 0.4em 0;
+}
+.ai-markdown pre code {
+  background: none;
+  padding: 0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.ai-markdown strong { color: var(--text-1); }
+.ai-markdown table { border-collapse: collapse; margin: 0.4em 0; width: 100%; font-size: 10px; }
+.ai-markdown th, .ai-markdown td { border: 1px solid var(--border-1); padding: 3px 6px; text-align: left; }
+.ai-markdown th { background: var(--surface-2); font-weight: 600; }
 
 .ai-loading {
   display: flex;

@@ -1,7 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
-
-const HOURS_PER_DAY = 8
-const REF_MS = Date.UTC(2025, 0, 6, 8, 0, 0)
+import { useVirtualizer } from '@tanstack/react-virtual'
+import { HOURS_PER_DAY, REF_MS } from '../utils/constants.js'
 
 function fmtHr(v) {
   if (v == null || Number.isNaN(Number(v))) return '—'
@@ -59,9 +58,19 @@ function wbsLevelClass(level) {
   return 'wbs-l3'
 }
 
+function SortArrow({ sortState, column }) {
+  if (sortState?.key !== column) return null
+  return (
+    <span style={{ fontSize: '8px', color: 'var(--text-2)', marginLeft: '4px' }}>
+      {sortState.dir === 'asc' ? '▲' : '▼'}
+    </span>
+  )
+}
+
 export default function ActivityTable({
   displayRows = [],
   activitiesCount = 0,
+  sort: sortState,
   setSort,
   selectedId,
   onSelectActivity,
@@ -115,6 +124,13 @@ export default function ActivityTable({
 
   const internalRef = useRef(null)
   const scrollRef = tableScrollRef || internalRef
+
+  const virtualizer = useVirtualizer({
+    count: displayRows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 30,
+    overscan: 10,
+  })
 
   const toggleSort = useCallback(
     (key) => {
@@ -180,92 +196,67 @@ export default function ActivityTable({
               <th title="Status" />
               <th
                 onClick={() => toggleSort('task_id')}
-                style={{ width: colWidths.id, position: 'relative' }}
+                style={{ width: colWidths.id, position: 'relative', cursor: 'pointer' }}
               >
-                Activity ID
-                <div
-                  className="col-resize-handle"
-                  onMouseDown={(e) => onResizeMouseDown(e, 'id')}
-                />
+                Activity ID<SortArrow sortState={sortState} column="task_id" />
+                <div className="col-resize-handle" onMouseDown={(e) => onResizeMouseDown(e, 'id')} />
               </th>
               <th
                 onClick={() => toggleSort('name')}
-                style={{ width: colWidths.name, position: 'relative' }}
+                style={{ width: colWidths.name, position: 'relative', cursor: 'pointer' }}
               >
-                Activity Name
-                <div
-                  className="col-resize-handle"
-                  onMouseDown={(e) => onResizeMouseDown(e, 'name')}
-                />
+                Activity Name<SortArrow sortState={sortState} column="name" />
+                <div className="col-resize-handle" onMouseDown={(e) => onResizeMouseDown(e, 'name')} />
               </th>
               <th
                 onClick={() => toggleSort('duration_hrs')}
-                style={{ width: colWidths.orig, position: 'relative' }}
+                style={{ width: colWidths.orig, position: 'relative', cursor: 'pointer' }}
               >
-                Orig Dur
-                <div
-                  className="col-resize-handle"
-                  onMouseDown={(e) => onResizeMouseDown(e, 'orig')}
-                />
+                Orig Dur<SortArrow sortState={sortState} column="duration_hrs" />
+                <div className="col-resize-handle" onMouseDown={(e) => onResizeMouseDown(e, 'orig')} />
               </th>
               <th style={{ width: colWidths.rem, position: 'relative' }}>
                 Rem Dur
-                <div
-                  className="col-resize-handle"
-                  onMouseDown={(e) => onResizeMouseDown(e, 'rem')}
-                />
+                <div className="col-resize-handle" onMouseDown={(e) => onResizeMouseDown(e, 'rem')} />
               </th>
               <th
                 onClick={() => toggleSort('early_start')}
-                style={{ width: colWidths.start, position: 'relative' }}
+                style={{ width: colWidths.start, position: 'relative', cursor: 'pointer' }}
               >
-                Start
-                <div
-                  className="col-resize-handle"
-                  onMouseDown={(e) => onResizeMouseDown(e, 'start')}
-                />
+                Start<SortArrow sortState={sortState} column="early_start" />
+                <div className="col-resize-handle" onMouseDown={(e) => onResizeMouseDown(e, 'start')} />
               </th>
               <th
                 onClick={() => toggleSort('early_finish')}
-                style={{ width: colWidths.finish, position: 'relative' }}
+                style={{ width: colWidths.finish, position: 'relative', cursor: 'pointer' }}
               >
-                Finish
-                <div
-                  className="col-resize-handle"
-                  onMouseDown={(e) => onResizeMouseDown(e, 'finish')}
-                />
+                Finish<SortArrow sortState={sortState} column="early_finish" />
+                <div className="col-resize-handle" onMouseDown={(e) => onResizeMouseDown(e, 'finish')} />
               </th>
               <th
                 onClick={() => toggleSort('late_start')}
-                style={{ width: colWidths.lstart, position: 'relative' }}
+                style={{ width: colWidths.lstart, position: 'relative', cursor: 'pointer' }}
               >
-                Late Start
-                <div
-                  className="col-resize-handle"
-                  onMouseDown={(e) => onResizeMouseDown(e, 'lstart')}
-                />
+                Late Start<SortArrow sortState={sortState} column="late_start" />
+                <div className="col-resize-handle" onMouseDown={(e) => onResizeMouseDown(e, 'lstart')} />
               </th>
               <th
                 onClick={() => toggleSort('late_finish')}
-                style={{ width: colWidths.lfinish, position: 'relative' }}
+                style={{ width: colWidths.lfinish, position: 'relative', cursor: 'pointer' }}
               >
-                Late Finish
-                <div
-                  className="col-resize-handle"
-                  onMouseDown={(e) => onResizeMouseDown(e, 'lfinish')}
-                />
+                Late Finish<SortArrow sortState={sortState} column="late_finish" />
+                <div className="col-resize-handle" onMouseDown={(e) => onResizeMouseDown(e, 'lfinish')} />
               </th>
               <th
                 onClick={() => toggleSort('total_float_hrs')}
-                style={{ width: colWidths.float, position: 'relative' }}
+                style={{ width: colWidths.float, position: 'relative', cursor: 'pointer' }}
               >
-                Total Float
-                <div
-                  className="col-resize-handle"
-                  onMouseDown={(e) => onResizeMouseDown(e, 'float')}
-                />
+                Total Float<SortArrow sortState={sortState} column="total_float_hrs" />
+                <div className="col-resize-handle" onMouseDown={(e) => onResizeMouseDown(e, 'float')} />
               </th>
-              <th onClick={() => toggleSort('free_float_hrs')}>Free Float</th>
+              <th onClick={() => toggleSort('free_float_hrs')} style={{ cursor: 'pointer' }}>
+                Free Float<SortArrow sortState={sortState} column="free_float_hrs" />
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -287,53 +278,79 @@ export default function ActivityTable({
                 </td>
               </tr>
             )}
-            {displayRows.map((row) => {
-              if (row.kind === 'wbs') {
-                const lvl = wbsLevelClass(row.level)
-                return (
-                  <tr key={row.id} className={`wbs-band ${lvl}`}>
-                    <td />
-                    <td colSpan={10}>{row.label}</td>
-                  </tr>
-                )
-              }
-
-              const a = row.activity
-              const id = String(a.task_id)
-              const isSel = selectedId === id
-              const isCrit = !!a.is_critical
-              const rowCls = [isCrit ? 'critical' : '', isSel ? 'selected' : ''].filter(Boolean).join(' ')
-
-              return (
-                <tr
-                  key={id}
-                  className={rowCls}
-                  onClick={() => onSelectActivity?.(a)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      onSelectActivity?.(a)
-                    }
-                  }}
-                  tabIndex={0}
-                  role="row"
-                >
-                  <td style={{ textAlign: 'center' }}>
-                    <StatusIcon activity={a} />
-                  </td>
-                  <td>{id}</td>
-                  <td title={a.wbs_name || a.wbs_id || ''}>{a.name}</td>
-                  <td>{fmtHr(a.duration_hrs)}</td>
-                  <td>{fmtHr(a.remaining_duration_hrs != null ? a.remaining_duration_hrs : a.duration_hrs)}</td>
-                  <td>{hourToDateStr(a.early_start)}</td>
-                  <td>{hourToDateStr(a.early_finish)}</td>
-                  <td>{hourToDateStr(a.late_start)}</td>
-                  <td>{hourToDateStr(a.late_finish)}</td>
-                  <td>{fmtDays(a.total_float_hrs)}</td>
-                  <td>{fmtDays(a.free_float_hrs)}</td>
-                </tr>
-              )
-            })}
+            {displayRows.length > 0 && (
+              <tr>
+                <td colSpan={11} style={{ padding: 0, border: 'none' }}>
+                  <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+                    {virtualizer.getVirtualItems().map((vRow) => {
+                      const row = displayRows[vRow.index]
+                      if (row.kind === 'wbs') {
+                        const lvl = wbsLevelClass(row.level)
+                        return (
+                          <div
+                            key={row.id}
+                            className={`vrow wbs-band-v ${lvl}`}
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              height: 30,
+                              transform: `translateY(${vRow.start}px)`,
+                            }}
+                          >
+                            {row.label}
+                          </div>
+                        )
+                      }
+                      const a = row.activity
+                      const id = String(a.task_id)
+                      const isSel = selectedId === id
+                      const isCrit = !!a.is_critical
+                      const cls = ['vrow', isCrit ? 'critical' : '', isSel ? 'selected' : ''].filter(Boolean).join(' ')
+                      return (
+                        <div
+                          key={id}
+                          className={cls}
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            height: 30,
+                            transform: `translateY(${vRow.start}px)`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => onSelectActivity?.(a)}
+                          role="row"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              onSelectActivity?.(a)
+                            }
+                          }}
+                        >
+                          <span style={{ width: 28, textAlign: 'center', flexShrink: 0 }}><StatusIcon activity={a} /></span>
+                          <span style={{ width: colWidths.id, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{id}</span>
+                          <span style={{ width: colWidths.name, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={a.wbs_name || a.wbs_id || ''}>{a.name}</span>
+                          <span style={{ width: colWidths.orig, flexShrink: 0, textAlign: 'center' }}>{fmtHr(a.duration_hrs)}</span>
+                          <span style={{ width: colWidths.rem, flexShrink: 0, textAlign: 'center' }}>{fmtHr(a.remaining_duration_hrs != null ? a.remaining_duration_hrs : a.duration_hrs)}</span>
+                          <span style={{ width: colWidths.start, flexShrink: 0, textAlign: 'center' }}>{hourToDateStr(a.early_start)}</span>
+                          <span style={{ width: colWidths.finish, flexShrink: 0, textAlign: 'center' }}>{hourToDateStr(a.early_finish)}</span>
+                          <span style={{ width: colWidths.lstart, flexShrink: 0, textAlign: 'center' }}>{hourToDateStr(a.late_start)}</span>
+                          <span style={{ width: colWidths.lfinish, flexShrink: 0, textAlign: 'center' }}>{hourToDateStr(a.late_finish)}</span>
+                          <span style={{ width: colWidths.float, flexShrink: 0, textAlign: 'center' }}>{fmtDays(a.total_float_hrs)}</span>
+                          <span style={{ width: 65, flexShrink: 0, textAlign: 'center' }}>{fmtDays(a.free_float_hrs)}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

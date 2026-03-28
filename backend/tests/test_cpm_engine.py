@@ -1,6 +1,6 @@
 """CPM engine unit tests: chains, parallel paths, lag, SS, SF, cycles, milestones."""
 
-from cpm_engine import compute_cpm
+from cpm_engine import compute_cpm, run_cpm_for_project_rows
 
 
 def test_simple_chain_fs() -> None:
@@ -165,3 +165,34 @@ def test_near_critical_detection() -> None:
     assert not crit["B"]
     assert crit["C"]
     assert not near_crit["C"]
+
+
+def test_in_progress_activity_retained_logic() -> None:
+    """In-progress activity with actual_start=100h, remaining=16h starts at 100, finishes at 116."""
+    activities = [
+        {"task_id": "A", "duration_hrs": 8, "actual_start": None, "actual_finish": None, "remaining_duration_hrs": None},
+        {"task_id": "B", "duration_hrs": 40, "actual_start": 100.0, "actual_finish": None, "remaining_duration_hrs": 16.0},
+        {"task_id": "C", "duration_hrs": 8, "actual_start": None, "actual_finish": None, "remaining_duration_hrs": None},
+    ]
+    relationships = [
+        {"pred_id": "A", "succ_id": "B", "rel_type": "FS", "lag_hrs": 0},
+        {"pred_id": "B", "succ_id": "C", "rel_type": "FS", "lag_hrs": 0},
+    ]
+    err, results, proj_end, path = run_cpm_for_project_rows(activities, relationships)
+    assert err is None
+    assert abs(results["B"]["early_start"] - 100.0) < 1e-2
+    assert abs(results["B"]["early_finish"] - 116.0) < 1e-2
+
+
+def test_completed_activity_zero_duration() -> None:
+    """Completed activity (actual_finish set) has effective duration 0."""
+    activities = [
+        {"task_id": "A", "duration_hrs": 40, "actual_start": 0.0, "actual_finish": 40.0, "remaining_duration_hrs": None},
+        {"task_id": "B", "duration_hrs": 8, "actual_start": None, "actual_finish": None, "remaining_duration_hrs": None},
+    ]
+    relationships = [
+        {"pred_id": "A", "succ_id": "B", "rel_type": "FS", "lag_hrs": 0},
+    ]
+    err, results, proj_end, path = run_cpm_for_project_rows(activities, relationships)
+    assert err is None
+    assert abs(results["A"]["early_finish"] - results["A"]["early_start"]) < 1e-2

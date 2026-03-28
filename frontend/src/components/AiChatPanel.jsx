@@ -3,10 +3,22 @@
  * Cross-component prompts: window.dispatchEvent(new CustomEvent('ai-chat-prompt', { detail: { prompt: '...' } }))
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { marked } from 'marked'
 
 function generateSessionId() {
     return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function MarkdownContent({ content }) {
+  const html = useMemo(() => {
+    try {
+      return marked.parse(content || '', { breaks: true, gfm: true })
+    } catch {
+      return content || ''
+    }
+  }, [content])
+  return <div className="ai-msg-body ai-markdown" dangerouslySetInnerHTML={{ __html: html }} />
 }
 
 const QUICK_ACTIONS = [
@@ -271,7 +283,11 @@ export default function AiChatPanel({
               {messages.map((m, i) => (
                 <div key={`${m.role}-${i}`} className={`ai-msg ai-msg-${m.role}`}>
                   <span className="ai-msg-role">{m.role === 'user' ? 'You' : 'Assistant'}</span>
-                  <div className="ai-msg-body">{m.content}</div>
+                  {m.role === 'assistant' ? (
+                    <MarkdownContent content={m.content} />
+                  ) : (
+                    <div className="ai-msg-body">{m.content}</div>
+                  )}
                 </div>
               ))}
               {loading ? (

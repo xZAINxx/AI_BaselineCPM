@@ -4,6 +4,7 @@ import ActivityDetailsPanel from './components/ActivityDetailsPanel.jsx'
 import ActivityTable from './components/ActivityTable.jsx'
 import AiChatPanel from './components/AiChatPanel.jsx'
 import BaselinePanel from './components/BaselinePanel.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 import GanttView from './components/GanttView.jsx'
 import ScheduleHealth from './components/ScheduleHealth.jsx'
 import UploadPanel from './components/UploadPanel.jsx'
@@ -37,6 +38,7 @@ export default function App() {
   const [longestPathOnly, setLongestPathOnly] = useState(false)
   const [groupByWbs, setGroupByWbs] = useState(false)
   const [wbsList, setWbsList] = useState([])
+  const [criticalPath, setCriticalPath] = useState([])
 
   const [selectedActivity, setSelectedActivity] = useState(null)
   const [splitPct, setSplitPct] = useState(58)
@@ -118,8 +120,9 @@ export default function App() {
         criticalOnly,
         longestPathOnly,
         sort,
+        criticalPath,
       }),
-    [activities, groupByWbs, filterSearch, criticalOnly, longestPathOnly, sort],
+    [activities, groupByWbs, filterSearch, criticalOnly, longestPathOnly, sort, criticalPath],
   )
 
   const onTableScroll = useCallback((e) => {
@@ -153,6 +156,7 @@ export default function App() {
       if (body.cycle_error) {
         setCpmError(body.cycle_error)
       }
+      setCriticalPath(body.critical_path || [])
       await loadProjectData(selectedProjectId)
     } catch (e) {
       setCpmError(e.message || 'CPM failed')
@@ -227,6 +231,7 @@ export default function App() {
               onRunCpm={runCpm}
               cpmBusy={cpmBusy}
               cpmError={cpmError}
+              onProjectDeleted={refreshProjects}
             />
           </div>
 
@@ -265,6 +270,7 @@ export default function App() {
         </div>
       </aside>
 
+      <ErrorBoundary>
       <main className="main">
         <div className="topbar">
           <span className="topbar-title">{selected ? selected.name : 'P6 XER Analyzer'}</span>
@@ -319,6 +325,7 @@ export default function App() {
               <ActivityTable
                 displayRows={displayRows}
                 activitiesCount={activities.length}
+                sort={sort}
                 setSort={setSort}
                 selectedId={selectedActivity ? String(selectedActivity.task_id) : null}
                 onSelectActivity={(a) => setSelectedActivity(a)}
@@ -350,6 +357,14 @@ export default function App() {
                 onZoomChange={setGanttZoom}
                 tableScrollRef={tableScrollRef}
                 syncScrollRef={syncScrollRef}
+                onTaskClick={(id) => {
+                  const act = activities.find((a) => String(a.task_id) === String(id))
+                  if (act) {
+                    setSelectedActivity(act)
+                    setBottomTab('details')
+                    setBottomOpen(true)
+                  }
+                }}
               />
             </section>
           </div>
@@ -395,6 +410,8 @@ export default function App() {
                   apiBase={API}
                   onActivityUpdated={onScheduleChanged}
                   wbsList={wbsList}
+                  relationships={relationships}
+                  activities={activities}
                 />
               ) : null}
               {bottomTab === 'health' ? (
@@ -441,6 +458,7 @@ export default function App() {
           <div className="statusbar-item">Offline · SQLite · CPM hours · 8 h/day</div>
         </div>
       </main>
+      </ErrorBoundary>
 
       <AiChatPanel
         open={aiOpen}

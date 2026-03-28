@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-
-const HOURS_PER_DAY = 8
-const REF_MS = Date.UTC(2025, 0, 6, 8, 0, 0)
+import { HOURS_PER_DAY, REF_MS } from '../utils/constants.js'
 
 function hourToDateStr(h) {
   if (h == null || Number.isNaN(Number(h))) return '—'

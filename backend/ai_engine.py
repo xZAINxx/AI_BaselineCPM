@@ -15,6 +15,8 @@ import time
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
+from constants import NEAR_CRIT_THRESHOLD
+
 # Optional: only imported when calling the API
 _anthropic = None
 
@@ -379,7 +381,6 @@ def apply_actions(conn: Any, proj_id: str, actions: List[dict]) -> List[str]:
     return log
 
 
-NEAR_CRIT_THRESHOLD = 40.0  # 5 days * 8 hours
 
 
 def analyze_schedule_network(

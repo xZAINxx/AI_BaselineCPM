@@ -19,7 +19,7 @@ from ai_engine import (
     generate_fix_suggestions,
 )
 from cpm_engine import run_cpm_for_project_rows
-from deps import get_db
+from deps import fetch_activities, fetch_relationships, get_db
 from diagnostics import run_diagnostics
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
@@ -74,39 +74,10 @@ class RelationshipCreate(BaseModel):
     lag_hrs: float = 0
 
 
-def _fetch_activities(conn: Any, proj_id: str) -> List[dict]:
-    cur = conn.cursor()
-    cur.execute(
-        """SELECT a.proj_id, a.task_id, a.name, a.duration_hrs, a.wbs_id, a.calendar_id,
-           a.early_start, a.early_finish, a.late_start, a.late_finish, a.total_float_hrs,
-           a.free_float_hrs, a.is_critical, a.is_near_critical, a.is_milestone,
-           a.constraint_type, a.constraint_date,
-           a.actual_start, a.actual_finish, a.remaining_duration_hrs, a.percent_complete,
-           w.wbs_name, w.wbs_short_name
-           FROM activities a
-           LEFT JOIN wbs w ON a.proj_id = w.proj_id AND a.wbs_id = w.wbs_id
-           WHERE a.proj_id = ? ORDER BY a.task_id""",
-        (proj_id,),
-    )
-    cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
-
-
-def _fetch_relationships(conn: Any, proj_id: str) -> List[dict]:
-    cur = conn.cursor()
-    cur.execute(
-        """SELECT id, pred_id, succ_id, rel_type, lag_hrs
-           FROM relationships WHERE proj_id = ?""",
-        (proj_id,),
-    )
-    cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
-
-
 def _persist_cpm(conn: Any, proj_id: str) -> Optional[str]:
     """Recompute CPM and write results. Returns cycle error string or None."""
-    acts = _fetch_activities(conn, proj_id)
-    rels = _fetch_relationships(conn, proj_id)
+    acts = fetch_activities(conn, proj_id)
+    rels = fetch_relationships(conn, proj_id)
     err, results, _proj_end, _path = run_cpm_for_project_rows(acts, rels)
     if err:
         return err
@@ -143,8 +114,8 @@ def ai_chat(body: ChatRequest) -> ChatResponse:
         if not cur.fetchone():
             raise HTTPException(404, "Project not found")
 
-        acts = _fetch_activities(conn, body.proj_id)
-        rels = _fetch_relationships(conn, body.proj_id)
+        acts = fetch_activities(conn, body.proj_id)
+        rels = fetch_relationships(conn, body.proj_id)
         diag = run_diagnostics(body.proj_id, acts, rels)
         summary = diag.summary.model_dump() if diag.summary else {}
 
@@ -196,8 +167,8 @@ def ai_suggestions(proj_id: str) -> dict:
         cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
         if not cur.fetchone():
             raise HTTPException(404, "Project not found")
-        acts = _fetch_activities(conn, proj_id)
-        rels = _fetch_relationships(conn, proj_id)
+        acts = fetch_activities(conn, proj_id)
+        rels = fetch_relationships(conn, proj_id)
         diag = run_diagnostics(proj_id, acts, rels)
         sug = generate_fix_suggestions(proj_id, acts, rels, diag)
         return {"suggestions": sug}
@@ -219,8 +190,8 @@ def ai_analysis(proj_id: str) -> dict:
         cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
         if not cur.fetchone():
             raise HTTPException(404, "Project not found")
-        acts = _fetch_activities(conn, proj_id)
-        rels = _fetch_relationships(conn, proj_id)
+        acts = fetch_activities(conn, proj_id)
+        rels = fetch_relationships(conn, proj_id)
         diag = run_diagnostics(proj_id, acts, rels)
         analysis = analyze_schedule_network(proj_id, acts, rels, diag)
         return analysis
@@ -267,8 +238,8 @@ def get_auto_fixes(proj_id: str) -> dict:
         cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
         if not cur.fetchone():
             raise HTTPException(404, "Project not found")
-        acts = _fetch_activities(conn, proj_id)
-        rels = _fetch_relationships(conn, proj_id)
+        acts = fetch_activities(conn, proj_id)
+        rels = fetch_relationships(conn, proj_id)
         fixes = generate_auto_fixes(proj_id, acts, rels)
         return {"fixes": fixes, "count": len(fixes)}
     finally:

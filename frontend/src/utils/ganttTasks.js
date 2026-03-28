@@ -2,8 +2,7 @@
  * Build dhtmlx-gantt payload from display rows + relationships.
  */
 
-const HOURS_PER_DAY = 8
-const BASE_MS = Date.UTC(2025, 0, 6, 8, 0, 0)
+import { HOURS_PER_DAY, REF_MS as BASE_MS } from './constants.js'
 
 function hourToStr(h) {
   if (h == null || Number.isNaN(Number(h))) return '2025-01-06 08:00'
@@ -64,6 +63,7 @@ export function buildGanttPayload(displayRows, relationships) {
         type: isMile ? 'milestone' : 'task',
         critical: !!a.is_critical,
         parent: currentParent || 0,
+        progress: (a.percent_complete || 0) / 100,
       }
       tasks.push(task)
       idSet.add(tid)

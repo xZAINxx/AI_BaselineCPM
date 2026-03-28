@@ -119,6 +119,7 @@ class DiagnosticsResult(BaseModel):
     findings: List[Finding] = Field(default_factory=list)
     summary: DiagnosticsSummary = Field(default_factory=DiagnosticsSummary)
     truncated: bool = False
+    dcma_checks: Optional[dict] = None
 
 
 class CpmResult(BaseModel):

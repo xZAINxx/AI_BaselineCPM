@@ -40,12 +40,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
+from constants import NEAR_CRIT_THRESHOLD
+
 # Critical / total-float tolerance (hours), per spec
 EPS = 1e-3
 # Tighter epsilon for iterative PDM convergence
 _RELAX_EPS = 1e-6
-# Near-critical threshold: 5 working days * 8 hours
-NEAR_CRIT_THRESHOLD = 40.0
 
 
 @dataclass
@@ -474,10 +474,21 @@ def run_cpm_for_project_rows(
 
     constraints: Dict[str, Tuple[str, float]] = {}
     for a in activities:
+        tid = str(a["task_id"])
         ctype = a.get("constraint_type")
         cdate = a.get("constraint_date")
         if ctype and cdate is not None:
-            constraints[str(a["task_id"])] = (str(ctype).upper(), float(cdate))
+            constraints[tid] = (str(ctype).upper(), float(cdate))
+
+        actual_start = a.get("actual_start")
+        actual_finish = a.get("actual_finish")
+        if actual_start is not None:
+            as_hrs = float(actual_start)
+            if actual_finish is not None:
+                constraints[tid] = ("MSO", as_hrs)
+            else:
+                if tid not in constraints or constraints[tid][0] not in ("MSO", "MFO"):
+                    constraints[tid] = ("SNET", as_hrs)
 
     rels: List[Tuple[str, str, str, float]] = []
     for r in relationships:

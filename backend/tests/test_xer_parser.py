@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from database import init_db
-from xer_parser import import_xer_to_sqlite, parse_xer_text, row_to_dict
+from xer_parser import import_xer_to_sqlite, parse_constraint_date, parse_xer_text, row_to_dict
 
 
 MINIMAL_XER = """%T\tPROJECT
@@ -58,3 +58,36 @@ def test_import_xer_to_sqlite() -> None:
 def test_row_to_dict() -> None:
     d = row_to_dict(["a", "b"], ["1", "2"])
     assert d == {"a": "1", "b": "2"}
+
+
+def test_parse_constraint_date_float() -> None:
+    assert parse_constraint_date("100.0") == 100.0
+
+
+def test_parse_constraint_date_iso() -> None:
+    result = parse_constraint_date("2025-03-15T08:00:00")
+    assert result is not None
+    expected = (68 * 24)  # 68 days from Jan 6 to Mar 15
+    assert abs(result - expected) < 1.0
+
+
+def test_parse_constraint_date_iso_short() -> None:
+    result = parse_constraint_date("2025-01-06 08:00")
+    assert result is not None
+    assert abs(result) < 1e-2
+
+
+def test_parse_constraint_date_date_only() -> None:
+    result = parse_constraint_date("2025-01-06")
+    assert result is not None
+    assert abs(result - (-8.0)) < 1e-2  # midnight vs 08:00 = -8h
+
+
+def test_parse_constraint_date_p6_short() -> None:
+    result = parse_constraint_date("06-Jan-25")
+    assert result is not None
+
+
+def test_parse_constraint_date_empty() -> None:
+    assert parse_constraint_date("") is None
+    assert parse_constraint_date(None) is None
