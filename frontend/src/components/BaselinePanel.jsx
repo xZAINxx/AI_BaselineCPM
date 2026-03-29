@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { HOURS_PER_DAY, REF_MS } from '../utils/constants.js'
-
-function hourToDateStr(h) {
-  if (h == null || Number.isNaN(Number(h))) return '—'
-  const ms = REF_MS + Number(h) * 3600000
-  return new Date(ms).toISOString().slice(0, 10)
-}
+import { HOURS_PER_DAY, REF_MS, hourToDateStr, fmtDays } from '../utils/constants.js'
 
 function fmtVar(v) {
   if (v == null || Number.isNaN(Number(v))) return '—'
@@ -27,6 +21,7 @@ export default function BaselinePanel({ projId, apiBase = '/api' }) {
   const [selectedBl, setSelectedBl] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+  const [blName, setBlName] = useState('')
 
   const loadBaselines = useCallback(async () => {
     if (!projId) return
@@ -49,11 +44,14 @@ export default function BaselinePanel({ projId, apiBase = '/api' }) {
     setSaving(true)
     setError(null)
     try {
-      const res = await fetch(`${apiBase}/projects/${encodeURIComponent(projId)}/baselines`, { method: 'POST' })
+      const url = new URL(`${apiBase}/projects/${encodeURIComponent(projId)}/baselines`, window.location.origin)
+      if (blName.trim()) url.searchParams.set('name', blName.trim())
+      const res = await fetch(url, { method: 'POST' })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
         throw new Error(d.detail || `HTTP ${res.status}`)
       }
+      setBlName('')
       await loadBaselines()
     } catch (e) {
       setError(e.message)
@@ -76,8 +74,37 @@ export default function BaselinePanel({ projId, apiBase = '/api' }) {
     }
   }
 
+  const exportComparison = () => {
+    if (!comparison?.length) return
+    const headers = ['Task ID', 'Name', 'BL Start', 'Cur Start', 'Start Variance', 'BL Finish', 'Cur Finish', 'Finish Variance', 'BL Duration', 'Cur Duration', 'Duration Variance']
+    const rows = comparison.map(c => [
+      c.task_id,
+      `"${(c.name || '').replace(/"/g, '""')}"`,
+      hourToDateStr(c.bl_early_start),
+      hourToDateStr(c.cur_early_start),
+      fmtVar(c.start_variance),
+      hourToDateStr(c.bl_early_finish),
+      hourToDateStr(c.cur_early_finish),
+      fmtVar(c.finish_variance),
+      c.bl_duration_hrs != null ? (c.bl_duration_hrs / HOURS_PER_DAY).toFixed(1) : '',
+      c.cur_duration_hrs != null ? (c.cur_duration_hrs / HOURS_PER_DAY).toFixed(1) : '',
+      c.duration_variance != null ? fmtVar(c.duration_variance) : '',
+    ])
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `baseline_${selectedBl}_comparison.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   const deleteBaseline = async (blNum) => {
     if (!projId) return
+    if (!window.confirm(`Delete baseline ${blNum}? This cannot be undone.`)) return
     try {
       await fetch(`${apiBase}/projects/${encodeURIComponent(projId)}/baselines/${blNum}`, { method: 'DELETE' })
       if (selectedBl === blNum) {
@@ -95,6 +122,14 @@ export default function BaselinePanel({ projId, apiBase = '/api' }) {
   return (
     <div className="schedule-health-root">
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+        <input
+          type="text"
+          className="p6-detail-input"
+          style={{ width: '180px', fontSize: '12px', padding: '4px 8px', border: '1px solid var(--border-1)', borderRadius: 'var(--r-md)', background: 'var(--surface-2)', color: 'var(--text-1)' }}
+          placeholder="Baseline name (optional)"
+          value={blName}
+          onChange={(e) => setBlName(e.target.value)}
+        />
         <button type="button" className="btn-primary" onClick={saveBaseline} disabled={saving}>
           {saving ? 'Saving…' : 'Save Baseline'}
         </button>
@@ -125,6 +160,15 @@ export default function BaselinePanel({ projId, apiBase = '/api' }) {
       ) : null}
 
       {comparison && comparison.length > 0 ? (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <span style={{ fontSize: '11px', color: 'var(--text-3)' }}>
+              Comparing BL {selectedBl} — {comparison.length} activities
+            </span>
+            <button type="button" className="btn-secondary" onClick={exportComparison}>
+              ↓ Export Comparison CSV
+            </button>
+          </div>
         <div className="activity-table-wrap" style={{ maxHeight: '300px' }}>
           <table className="activity-table">
             <thead>
@@ -154,6 +198,7 @@ export default function BaselinePanel({ projId, apiBase = '/api' }) {
               ))}
             </tbody>
           </table>
+        </div>
         </div>
       ) : selectedBl != null ? (
         <p style={{ fontSize: '12px', color: 'var(--text-3)' }}>No comparison data available.</p>

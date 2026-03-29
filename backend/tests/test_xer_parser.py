@@ -12,10 +12,10 @@ MINIMAL_XER = """%T\tPROJECT
 %F\tproj_id\tproj_short_name
 %R\t100\tDemoProj
 %T\tTASK
-%F\ttask_id\tproj_id\ttask_name\ttarget_drtn_hr_cnt\twbs_id\tclndr_id\ttask_type
-%R\t1\t100\tA\t8.0\t\t\t
-%R\t2\t100\tB\t8.0\t\t\t
-%R\t3\t100\tC\t0.0\t\t\tTT_Mile
+%F\ttask_id\tproj_id\ttask_name\ttarget_drtn_hr_cnt\twbs_id\tclndr_id\ttask_type\ttask_code
+%R\t1\t100\tA\t8.0\t\t\t\tA1000
+%R\t2\t100\tB\t8.0\t\t\t\tA1010
+%R\t3\t100\tC\t0.0\t\t\tTT_Mile\tA1020
 %T\tTASKPRED
 %F\ttask_pred_id\ttask_id\tpred_task_id\tpred_type\tlag_hr_cnt\tproj_id
 %R\t1\t2\t1\tPR_FS\t0.0\t100

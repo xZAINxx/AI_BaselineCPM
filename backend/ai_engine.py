@@ -15,7 +15,24 @@ import time
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
-from constants import NEAR_CRIT_THRESHOLD
+from constants import HOURS_PER_DAY, NEAR_CRIT_THRESHOLD, REF_DATETIME
+from datetime import timedelta
+
+
+def _hours_to_date(hrs):
+    """Convert hours from reference to DD-MMM-YY string."""
+    if hrs is None:
+        return None
+    dt = REF_DATETIME.replace(tzinfo=None) + timedelta(hours=float(hrs))
+    return dt.strftime("%d-%b-%y")
+
+
+def _hours_to_days(hrs):
+    """Convert hours to working days."""
+    if hrs is None:
+        return None
+    return round(float(hrs) / HOURS_PER_DAY, 1)
+
 
 # Optional: only imported when calling the API
 _anthropic = None
@@ -57,7 +74,7 @@ def _context_hash(context: str) -> str:
 
 SYSTEM_PROMPT = """You are an expert Primavera P6 / construction scheduling assistant working with a local SQLite schedule.
 
-The user sees activities (task_id, name, duration_hrs, CPM early/late times in hours) and relationships (pred_id, succ_id, rel_type FS/SS/FF/SF, lag_hrs).
+The user sees activities with task_code (the human-readable P6 Activity ID like "A2410") and task_id (numeric internal ID). Use task_code when referring to activities in your replies. The schedule context shows dates as DD-MMM-YY and durations in working days for readability. However, in your JSON actions, always use hours for duration_hrs and lag_hrs (1 day = 8 hours). Reference activities by their task_id (numeric) in actions, but use task_code in your reply text.
 
 When the user asks to change the schedule, respond with a single JSON object ONLY (no markdown fences) in this exact shape:
 {
@@ -72,11 +89,62 @@ When the user asks to change the schedule, respond with a single JSON object ONL
 }
 
 Rules:
-- Use only task_ids that exist for modify/delete, or new unique task_ids for add.
+- Use only task_ids that exist for modify/delete.
+- For new activities, generate task_ids that match the project's existing ID pattern. Most P6 schedules use "A" + 4-digit number (e.g., A5010, A5020). Look at the existing task_ids in the schedule context to determine the pattern, then pick IDs in a new range (e.g., A9000+) to avoid collisions. Always use uppercase letter prefix + numeric suffix.
 - For relationships, pred_id and succ_id must be existing task_ids after adds (order: add activities first if needed).
 - Keep actions minimal and safe; if unsure, return empty actions and explain in "reply".
 - Durations are in work hours (same as P6 target_drtn_hr_cnt style).
 """
+
+
+def suggest_next_task_id(existing_ids: list[str], count: int = 1) -> list[str]:
+    """
+    Generate next available task IDs matching the project's convention.
+
+    Detects the prefix pattern (e.g., 'A') and finds the highest numeric suffix,
+    then returns IDs starting from the next round number.
+
+    Example: existing ['A1030', 'A4540'] → suggests ['A4550'] or ['A9010'] for safety.
+    """
+    if not existing_ids:
+        return [f"A{9000 + i * 10}" for i in range(count)]
+
+    # Detect common prefix
+    prefix = ""
+    for sid in existing_ids:
+        s = str(sid).strip()
+        p = ""
+        for ch in s:
+            if ch.isalpha():
+                p += ch
+            else:
+                break
+        if p:
+            prefix = p.upper()
+            break
+
+    if not prefix:
+        prefix = "A"  # default to P6 convention
+
+    # Find max numeric suffix
+    max_num = 0
+    for sid in existing_ids:
+        s = str(sid).strip()
+        num_part = ""
+        for ch in reversed(s):
+            if ch.isdigit():
+                num_part = ch + num_part
+            else:
+                break
+        if num_part:
+            max_num = max(max_num, int(num_part))
+
+    # Start from next round 10 in a safe range (9000+ or max+10)
+    start = max(max_num + 10, 9000)
+    # Round up to nearest 10
+    start = ((start + 9) // 10) * 10
+
+    return [f"{prefix}{start + i * 10}" for i in range(count)]
 
 
 def build_schedule_context(
@@ -100,6 +168,43 @@ def build_schedule_context(
         lines.append("(Full activity and relationship data was provided in the initial message of this session.)")
         return "\n".join(lines)
 
+    # Detect ID pattern for new activity generation
+    if activities:
+        sample_ids = [str(a.get("task_id", "")) for a in activities[:20]]
+        prefixes = set()
+        for sid in sample_ids:
+            prefix = ""
+            for ch in sid:
+                if ch.isalpha():
+                    prefix += ch
+                else:
+                    break
+            if prefix:
+                prefixes.add(prefix.upper())
+        if prefixes:
+            max_num = 0
+            for a in activities:
+                tid = str(a.get("task_id", ""))
+                # Extract numeric part
+                num_part = ""
+                for ch in reversed(tid):
+                    if ch.isdigit():
+                        num_part = ch + num_part
+                    else:
+                        break
+                if num_part:
+                    max_num = max(max_num, int(num_part))
+            common_prefix = sorted(
+                prefixes,
+                key=lambda p: sum(1 for sid in sample_ids if sid.upper().startswith(p)),
+                reverse=True,
+            )[0]
+            lines.append(
+                f"task_id_pattern: prefix='{common_prefix}', max_numeric={max_num}, next_available='{common_prefix}{max_num + 10}'"
+            )
+        else:
+            lines.append("task_id_pattern: numeric only, use range 9000+")
+
     critical_activities = sorted(
         [a for a in activities if a.get("is_critical")],
         key=lambda x: float(x.get("duration_hrs") or 0),
@@ -108,7 +213,7 @@ def build_schedule_context(
     if critical_activities:
         lines.append("\ncritical_path_drivers (top 5 by duration):")
         for a in critical_activities[:5]:
-            lines.append(f"  - {a.get('task_id')}: {a.get('name')} ({a.get('duration_hrs')}h)")
+            lines.append(f"  - {a.get('task_code', a.get('task_id'))}: {a.get('name')} ({_hours_to_days(a.get('duration_hrs'))}d)")
 
     near_critical = [
         a for a in activities
@@ -117,10 +222,10 @@ def build_schedule_context(
         and (a.get("total_float_hrs") or 0) < NEAR_CRIT_THRESHOLD
     ]
     if near_critical:
-        lines.append(f"\nnear_critical_count: {len(near_critical)} (TF < {NEAR_CRIT_THRESHOLD}h)")
+        lines.append(f"\nnear_critical_count: {len(near_critical)} (TF < {_hours_to_days(NEAR_CRIT_THRESHOLD)}d)")
         for a in near_critical[:5]:
-            tf = a.get("total_float_hrs", 0)
-            lines.append(f"  - {a.get('task_id')}: {a.get('name')} (TF={tf:.1f}h)")
+            days = _hours_to_days(a.get("total_float_hrs"))
+            lines.append(f"  - {a.get('task_code', a.get('task_id'))}: {a.get('name')} (TF={days}d)")
 
     total = len(activities)
     rel_count = len(relationships)
@@ -133,12 +238,13 @@ def build_schedule_context(
             json.dumps(
                 {
                     "task_id": a.get("task_id"),
+                    "task_code": a.get("task_code", a.get("task_id")),
                     "name": a.get("name"),
-                    "duration_hrs": a.get("duration_hrs"),
+                    "duration_days": _hours_to_days(a.get("duration_hrs")),
                     "is_milestone": a.get("is_milestone"),
-                    "early_start": a.get("early_start"),
-                    "early_finish": a.get("early_finish"),
-                    "total_float_hrs": a.get("total_float_hrs"),
+                    "early_start": _hours_to_date(a.get("early_start")),
+                    "early_finish": _hours_to_date(a.get("early_finish")),
+                    "total_float_days": _hours_to_days(a.get("total_float_hrs")),
                     "is_critical": a.get("is_critical"),
                 },
                 ensure_ascii=False,
@@ -155,7 +261,7 @@ def build_schedule_context(
                     "pred_id": r.get("pred_id"),
                     "succ_id": r.get("succ_id"),
                     "rel_type": r.get("rel_type"),
-                    "lag_hrs": r.get("lag_hrs"),
+                    "lag_days": _hours_to_days(r.get("lag_hrs")),
                 },
                 ensure_ascii=False,
             )
@@ -303,6 +409,8 @@ def apply_actions(conn: Any, proj_id: str, actions: List[dict]) -> List[str]:
             tid = str(raw.get("task_id", "")).strip()
             if not tid:
                 raise ValueError("add_activity missing task_id")
+            # Warn (but don't block) if task_id doesn't match project pattern
+            # This is informational — AI should generate matching IDs but we don't enforce
             name = str(raw.get("name") or f"Task {tid}")
             dur = float(raw.get("duration_hrs") or 0)
             is_ms = int(raw.get("is_milestone") or (1 if dur <= 0 else 0))
@@ -381,6 +489,38 @@ def apply_actions(conn: Any, proj_id: str, actions: List[dict]) -> List[str]:
     return log
 
 
+
+
+def build_rejection_context(
+    proj_id: str,
+    activities: List[dict],
+    relationships: List[dict],
+    rejection_comments: str,
+) -> str:
+    """Build a prompt for Claude to analyze rejection comments and suggest fixes."""
+    act_lines = []
+    for a in activities[:100]:
+        act_lines.append(
+            f"  {a.get('task_code', a.get('task_id'))}: {a.get('name')} "
+            f"(dur={_hours_to_days(a.get('duration_hrs'))}d, TF={_hours_to_days(a.get('total_float_hrs'))}d, "
+            f"crit={'Y' if a.get('is_critical') else 'N'})"
+        )
+
+    return (
+        f"Project: {proj_id}\n"
+        f"Activities ({len(activities)}):\n" + "\n".join(act_lines[:100]) +
+        f"\n\nRelationship count: {len(relationships)}\n\n"
+        f"REJECTION COMMENTS FROM REVIEWER:\n"
+        f"---\n{rejection_comments}\n---\n\n"
+        f"Analyze these rejection comments against the schedule above. "
+        f"For each comment/correction:\n"
+        f"1. Identify which activity/activities it refers to (by task_code)\n"
+        f"2. Explain what the reviewer is asking for\n"
+        f"3. Suggest concrete schedule changes as JSON actions\n\n"
+        f"Respond with a JSON object: {{ \"reply\": \"analysis summary\", \"actions\": [...] }}\n"
+        f"Use the same action format: add_relationship, modify_activity, etc.\n"
+        f"Reference activities by their task_id (numeric) in actions, but use task_code in your reply text."
+    )
 
 
 def analyze_schedule_network(

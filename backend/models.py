@@ -26,6 +26,8 @@ class ImportResult(BaseModel):
     relationships_count: int
     calendars_count: int = 0
     wbs_count: int = 0
+    resources_count: int = 0
+    task_resources_count: int = 0
 
 
 class WbsCreateBody(BaseModel):
@@ -50,6 +52,7 @@ class ActivityRow(BaseModel):
 
     proj_id: str
     task_id: str
+    task_code: Optional[str] = None
     name: str
     duration_hrs: float
     wbs_id: Optional[str] = None

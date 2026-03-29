@@ -1,22 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { HOURS_PER_DAY, REF_MS } from '../utils/constants.js'
-
-function fmtHr(v) {
-  if (v == null || Number.isNaN(Number(v))) return '—'
-  return Number(v).toFixed(2)
-}
-
-function fmtDays(h) {
-  if (h == null || Number.isNaN(Number(h))) return '—'
-  return (Number(h) / HOURS_PER_DAY).toFixed(2)
-}
-
-function hourToDateStr(h) {
-  if (h == null || Number.isNaN(Number(h))) return '—'
-  const ms = REF_MS + Number(h) * 3600000
-  return new Date(ms).toISOString().slice(0, 10)
-}
+import { HOURS_PER_DAY, REF_MS, hourToDateStr, fmtDays } from '../utils/constants.js'
 
 /**
  * P6-style status (heuristic from CPM fields).
@@ -67,6 +51,14 @@ function SortArrow({ sortState, column }) {
   )
 }
 
+function getDateStr(activity, field, calendarDates) {
+  if (calendarDates) {
+    const cal = calendarDates[String(activity.task_id)]
+    if (cal && cal[field]) return cal[field]
+  }
+  return hourToDateStr(activity[field])
+}
+
 export default function ActivityTable({
   displayRows = [],
   activitiesCount = 0,
@@ -82,11 +74,14 @@ export default function ActivityTable({
   onLongestPathOnly,
   groupByWbs,
   onGroupByWbs,
+  useCalendarDates,
+  onUseCalendarDates,
+  calendarDates,
   tableScrollRef,
   onTableScroll,
 }) {
   const [colWidths, setColWidths] = useState({
-    id: 80,
+    id: 100,
     name: 260,
     orig: 55,
     rem: 55,
@@ -184,6 +179,20 @@ export default function ActivityTable({
         >
           Group by WBS
         </button>
+        {onUseCalendarDates ? (
+          <button
+            type="button"
+            className="btn-secondary"
+            style={useCalendarDates ? {
+              borderColor: 'var(--indigo)',
+              color: 'var(--indigo)',
+              background: 'var(--indigo-dim)',
+            } : undefined}
+            onClick={() => onUseCalendarDates(!useCalendarDates)}
+          >
+            Calendar Dates
+          </button>
+        ) : null}
         <span className="filter-count">
           {activityCount} of {activitiesCount} activities
         </span>
@@ -212,11 +221,11 @@ export default function ActivityTable({
                 onClick={() => toggleSort('duration_hrs')}
                 style={{ width: colWidths.orig, position: 'relative', cursor: 'pointer' }}
               >
-                Orig Dur<SortArrow sortState={sortState} column="duration_hrs" />
+                Orig Dur (d)<SortArrow sortState={sortState} column="duration_hrs" />
                 <div className="col-resize-handle" onMouseDown={(e) => onResizeMouseDown(e, 'orig')} />
               </th>
               <th style={{ width: colWidths.rem, position: 'relative' }}>
-                Rem Dur
+                Rem Dur (d)
                 <div className="col-resize-handle" onMouseDown={(e) => onResizeMouseDown(e, 'rem')} />
               </th>
               <th
@@ -251,11 +260,11 @@ export default function ActivityTable({
                 onClick={() => toggleSort('total_float_hrs')}
                 style={{ width: colWidths.float, position: 'relative', cursor: 'pointer' }}
               >
-                Total Float<SortArrow sortState={sortState} column="total_float_hrs" />
+                TF (d)<SortArrow sortState={sortState} column="total_float_hrs" />
                 <div className="col-resize-handle" onMouseDown={(e) => onResizeMouseDown(e, 'float')} />
               </th>
               <th onClick={() => toggleSort('free_float_hrs')} style={{ cursor: 'pointer' }}>
-                Free Float<SortArrow sortState={sortState} column="free_float_hrs" />
+                FF (d)<SortArrow sortState={sortState} column="free_float_hrs" />
               </th>
             </tr>
           </thead>
@@ -334,14 +343,14 @@ export default function ActivityTable({
                           }}
                         >
                           <span style={{ width: 28, textAlign: 'center', flexShrink: 0 }}><StatusIcon activity={a} /></span>
-                          <span style={{ width: colWidths.id, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{id}</span>
+                          <span style={{ width: colWidths.id, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.task_code || id}</span>
                           <span style={{ width: colWidths.name, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={a.wbs_name || a.wbs_id || ''}>{a.name}</span>
-                          <span style={{ width: colWidths.orig, flexShrink: 0, textAlign: 'center' }}>{fmtHr(a.duration_hrs)}</span>
-                          <span style={{ width: colWidths.rem, flexShrink: 0, textAlign: 'center' }}>{fmtHr(a.remaining_duration_hrs != null ? a.remaining_duration_hrs : a.duration_hrs)}</span>
-                          <span style={{ width: colWidths.start, flexShrink: 0, textAlign: 'center' }}>{hourToDateStr(a.early_start)}</span>
-                          <span style={{ width: colWidths.finish, flexShrink: 0, textAlign: 'center' }}>{hourToDateStr(a.early_finish)}</span>
-                          <span style={{ width: colWidths.lstart, flexShrink: 0, textAlign: 'center' }}>{hourToDateStr(a.late_start)}</span>
-                          <span style={{ width: colWidths.lfinish, flexShrink: 0, textAlign: 'center' }}>{hourToDateStr(a.late_finish)}</span>
+                          <span style={{ width: colWidths.orig, flexShrink: 0, textAlign: 'center' }}>{fmtDays(a.duration_hrs)}</span>
+                          <span style={{ width: colWidths.rem, flexShrink: 0, textAlign: 'center' }}>{fmtDays(a.remaining_duration_hrs != null ? a.remaining_duration_hrs : a.duration_hrs)}</span>
+                          <span style={{ width: colWidths.start, flexShrink: 0, textAlign: 'center' }}>{getDateStr(a, 'early_start', calendarDates)}</span>
+                          <span style={{ width: colWidths.finish, flexShrink: 0, textAlign: 'center' }}>{getDateStr(a, 'early_finish', calendarDates)}</span>
+                          <span style={{ width: colWidths.lstart, flexShrink: 0, textAlign: 'center' }}>{getDateStr(a, 'late_start', calendarDates)}</span>
+                          <span style={{ width: colWidths.lfinish, flexShrink: 0, textAlign: 'center' }}>{getDateStr(a, 'late_finish', calendarDates)}</span>
                           <span style={{ width: colWidths.float, flexShrink: 0, textAlign: 'center' }}>{fmtDays(a.total_float_hrs)}</span>
                           <span style={{ width: 65, flexShrink: 0, textAlign: 'center' }}>{fmtDays(a.free_float_hrs)}</span>
                         </div>
@@ -355,7 +364,7 @@ export default function ActivityTable({
         </table>
       </div>
       <p className="table-footnote">
-        Dates are linear projections from a reference start ({HOURS_PER_DAY} h/day). Status dots are heuristic.
+        Dates projected from reference start (8h/day). Durations and float in working days.
       </p>
     </div>
   )

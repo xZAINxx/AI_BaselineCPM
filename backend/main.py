@@ -39,6 +39,7 @@ from models import (
     WbsCreateBody,
     WbsUpdateBody,
 )
+from calendar_engine import load_calendars, hours_to_calendar_date, get_default_calendar
 from xer_parser import import_xer_to_sqlite
 
 app = FastAPI(title="Primavera P6 XER Local Analyzer", version="1.0.0")
@@ -88,6 +89,8 @@ async def import_xer(file: UploadFile = File(...)) -> ImportResult:
         relationships_count=summary["relationships_count"],
         calendars_count=summary.get("calendars_count", 0),
         wbs_count=summary.get("wbs_count", 0),
+        resources_count=summary.get("resources_count", 0),
+        task_resources_count=summary.get("task_resources_count", 0),
     )
 
 
@@ -166,12 +169,17 @@ def get_activities(
             continue
         if search:
             s = search.lower()
-            if s not in (r.get("name") or "").lower() and s not in str(r.get("task_id")):
+            if (
+                s not in (r.get("name") or "").lower()
+                and s not in str(r.get("task_id"))
+                and s not in str(r.get("task_code") or "").lower()
+            ):
                 continue
         items.append(
             ActivityRow(
                 proj_id=r["proj_id"],
                 task_id=str(r["task_id"]),
+                task_code=r.get("task_code") or str(r["task_id"]),
                 name=r.get("name") or "",
                 duration_hrs=float(r.get("duration_hrs") or 0),
                 wbs_id=r.get("wbs_id"),
@@ -307,6 +315,10 @@ def delete_project(proj_id: str) -> dict:
             raise HTTPException(404, "Project not found")
         cur.execute("DELETE FROM baseline_activities WHERE baseline_id IN (SELECT id FROM baselines WHERE proj_id = ?)", (proj_id,))
         cur.execute("DELETE FROM baselines WHERE proj_id = ?", (proj_id,))
+        cur.execute("DELETE FROM xer_raw_tables WHERE proj_id = ?", (proj_id,))
+        cur.execute("DELETE FROM task_activity_codes WHERE proj_id = ?", (proj_id,))
+        cur.execute("DELETE FROM task_resources WHERE proj_id = ?", (proj_id,))
+        cur.execute("DELETE FROM resources WHERE proj_id = ?", (proj_id,))
         cur.execute("DELETE FROM relationships WHERE proj_id = ?", (proj_id,))
         cur.execute("DELETE FROM activities WHERE proj_id = ?", (proj_id,))
         cur.execute("DELETE FROM calendars WHERE proj_id = ?", (proj_id,))
@@ -521,7 +533,7 @@ def export_activities_xlsx(proj_id: str) -> Response:
         )
 
         vals = [
-            a.get("task_id"),
+            a.get("task_code") or a.get("task_id"),
             a.get("name"),
             h2days(a.get("duration_hrs")),
             h2days(rem_dur),
@@ -562,6 +574,48 @@ def export_activities_xlsx(proj_id: str) -> Response:
         content=buf.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{proj_id}_cpm_schedule.xlsx"'},
+    )
+
+
+@app.get("/api/projects/{proj_id}/export/schedule.xer")
+def export_xer(proj_id: str) -> Response:
+    """Export current schedule as a P6-compatible .xer file."""
+    import json as _json
+    from xer_writer import build_xer_export
+
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM projects WHERE proj_id = ?", (proj_id,))
+        proj_row = cur.fetchone()
+        if not proj_row:
+            raise HTTPException(404, "Project not found")
+
+        cur.execute(
+            "SELECT table_name, field_names, row_data FROM xer_raw_tables WHERE proj_id = ?",
+            (proj_id,),
+        )
+        raw_tables = {}
+        for row in cur.fetchall():
+            tbl_name = row[0]
+            fields = _json.loads(row[1])
+            rows = _json.loads(row[2])
+            raw_tables[tbl_name] = (fields, rows)
+
+        if not raw_tables:
+            raise HTTPException(400, "No original XER data stored. Re-import the .xer file to enable export.")
+
+        acts = fetch_activities(conn, proj_id)
+        rels = fetch_relationships(conn, proj_id)
+    finally:
+        conn.close()
+
+    xer_content = build_xer_export(proj_id, raw_tables, acts, rels)
+
+    return Response(
+        content=xer_content.encode("utf-8"),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{proj_id}_export.xer"'},
     )
 
 
@@ -749,6 +803,140 @@ def delete_baseline(proj_id: str, baseline_number: int) -> dict:
             raise HTTPException(404, "Baseline not found")
         conn.commit()
         return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.get("/api/projects/{proj_id}/calendar-dates")
+def get_calendar_dates(proj_id: str) -> dict:
+    """Return calendar-aware date strings for all activities."""
+    from constants import REF_DATETIME
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Project not found")
+
+        acts = fetch_activities(conn, proj_id)
+        calendars = load_calendars(conn, proj_id)
+        default_cal = get_default_calendar()
+        ref_date = REF_DATETIME.date()
+
+        date_map = {}
+        for a in acts:
+            tid = str(a["task_id"])
+            cal_id = str(a.get("calendar_id") or "")
+            cal = calendars.get(cal_id) or calendars.get(f"{proj_id}:{cal_id}") or default_cal
+
+            entry = {}
+            for fld in ("early_start", "early_finish", "late_start", "late_finish"):
+                hrs = a.get(fld)
+                if hrs is not None:
+                    cal_date = hours_to_calendar_date(float(hrs), cal, ref_date)
+                    entry[fld] = cal_date.isoformat()
+                else:
+                    entry[fld] = None
+            date_map[tid] = entry
+
+        return {
+            "dates": date_map,
+            "calendar_count": len(calendars),
+            "using_default": len(calendars) == 0,
+        }
+    finally:
+        conn.close()
+
+
+@app.get("/api/projects/{proj_id}/resources")
+def get_resources(proj_id: str) -> dict:
+    """Resource summary: all resources and per-task assignments."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Project not found")
+
+        cur.execute(
+            "SELECT rsrc_id, rsrc_short_name, rsrc_name, rsrc_type FROM resources WHERE proj_id = ? ORDER BY rsrc_name",
+            (proj_id,),
+        )
+        resources = [{"rsrc_id": r[0], "short_name": r[1], "name": r[2], "type": r[3]} for r in cur.fetchall()]
+
+        cur.execute(
+            """SELECT tr.task_id, tr.rsrc_id, COALESCE(r.rsrc_name, tr.rsrc_name, tr.rsrc_id) as name,
+                      tr.target_qty, tr.target_cost, tr.actual_cost, tr.remain_cost
+               FROM task_resources tr
+               LEFT JOIN resources r ON tr.rsrc_id = r.rsrc_id AND tr.proj_id = r.proj_id
+               WHERE tr.proj_id = ?
+               ORDER BY tr.task_id, name""",
+            (proj_id,),
+        )
+        cols = [d[0] for d in cur.description]
+        assignments = [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        return {"resources": resources, "assignments": assignments, "total_resources": len(resources), "total_assignments": len(assignments)}
+    finally:
+        conn.close()
+
+
+@app.get("/api/projects/{proj_id}/activity-codes")
+def get_activity_codes(proj_id: str) -> dict:
+    """Return activity code types and their values for filtering/grouping."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM projects WHERE proj_id = ?", (proj_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Project not found")
+
+        cur.execute(
+            "SELECT actv_code_type_id, actv_code_type, seq_num FROM activity_code_types WHERE proj_id = ? ORDER BY seq_num",
+            (proj_id,),
+        )
+        types = [{"id": r[0], "name": r[1], "seq": r[2]} for r in cur.fetchall()]
+
+        cur.execute(
+            """SELECT ac.actv_code_type_id, ac.actv_code_id, ac.short_name, ac.actv_code_name, ac.color
+               FROM activity_codes ac WHERE ac.proj_id = ?
+               ORDER BY ac.actv_code_type_id, ac.seq_num""",
+            (proj_id,),
+        )
+        values = {}
+        for r in cur.fetchall():
+            type_id = r[0]
+            if type_id not in values:
+                values[type_id] = []
+            values[type_id].append({"id": r[1], "short_name": r[2], "name": r[3], "color": r[4]})
+
+        return {"types": types, "values": values}
+    finally:
+        conn.close()
+
+
+@app.get("/api/projects/{proj_id}/activities/{task_id}/codes")
+def get_task_codes(proj_id: str, task_id: str) -> List[dict]:
+    """Return activity codes assigned to a specific task."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT tac.actv_code_type_id,
+                      COALESCE(act.actv_code_type, tac.actv_code_type_id) as type_name,
+                      tac.actv_code_id,
+                      COALESCE(ac.short_name, '') as short_name,
+                      COALESCE(ac.actv_code_name, '') as code_name,
+                      ac.color
+               FROM task_activity_codes tac
+               LEFT JOIN activity_code_types act ON tac.actv_code_type_id = act.actv_code_type_id
+               LEFT JOIN activity_codes ac ON tac.actv_code_id = ac.actv_code_id
+               WHERE tac.proj_id = ? AND tac.task_id = ?
+               ORDER BY act.seq_num, ac.seq_num""",
+            (proj_id, task_id),
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
     finally:
         conn.close()
 

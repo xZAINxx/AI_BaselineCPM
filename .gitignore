@@ -29,6 +29,8 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+docker-compose.override.yml
+
 # OS / editors
 .DS_Store
 .idea/

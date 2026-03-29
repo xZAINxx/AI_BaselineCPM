@@ -25,7 +25,9 @@ export function buildDisplayRows(activities, opts) {
   const s = (search || '').trim().toLowerCase()
   if (s) {
     rows = rows.filter(
-      (a) => String(a.task_id).toLowerCase().includes(s) || (a.name && String(a.name).toLowerCase().includes(s)),
+      (a) => String(a.task_id).toLowerCase().includes(s)
+          || String(a.task_code || '').toLowerCase().includes(s)
+          || (a.name && String(a.name).toLowerCase().includes(s)),
     )
   }
   if (criticalOnly) rows = rows.filter((a) => a.is_critical)

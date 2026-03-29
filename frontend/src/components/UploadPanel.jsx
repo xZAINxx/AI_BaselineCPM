@@ -53,6 +53,11 @@ export default function UploadPanel({
     window.location.href = `${API}/projects/${encodeURIComponent(selectedProjectId)}/export/activities.xlsx`
   }
 
+  const exportXer = () => {
+    if (!selectedProjectId) return
+    window.location.href = `${API}/projects/${encodeURIComponent(selectedProjectId)}/export/schedule.xer`
+  }
+
   const exportCsv = () => {
     if (!selectedProjectId) return
     window.location.href = `${API}/projects/${encodeURIComponent(selectedProjectId)}/export/diagnostics.csv`
@@ -107,6 +112,8 @@ export default function UploadPanel({
         <p className="import-summary">
           ✓ {lastImport.activities_count} activities · {lastImport.relationships_count} rels
           {lastImport.calendars_count ? ` · ${lastImport.calendars_count} cals` : ''}
+          {lastImport.resources_count ? ` · ${lastImport.resources_count} rsrc` : ''}
+          {lastImport.task_resources_count ? ` · ${lastImport.task_resources_count} assigns` : ''}
         </p>
       ) : null}
 
@@ -163,6 +170,10 @@ export default function UploadPanel({
       {cpmError ? <p className="error">{cpmError}</p> : null}
 
       <div className="upload-exports">
+        <button type="button" className="btn-secondary" disabled={!selectedProjectId} onClick={exportXer}
+          style={{ background: 'var(--emerald-dim)', borderColor: 'var(--emerald)', color: 'var(--emerald)' }}>
+          ↓ Export XER (P6)
+        </button>
         <button type="button" className="btn-secondary" disabled={!selectedProjectId} onClick={exportXlsx}>
           ↓ Export XLSX
         </button>

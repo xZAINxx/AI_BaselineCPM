@@ -57,7 +57,7 @@ export function buildGanttPayload(displayRows, relationships) {
       const tid = String(a.task_id)
       const task = {
         id: tid,
-        text: a.name || `Task ${tid}`,
+        text: a.name || `Task ${a.task_code || tid}`,
         start_date: start,
         duration: isMile ? 0 : Math.max(durDays, 0.01),
         type: isMile ? 'milestone' : 'task',

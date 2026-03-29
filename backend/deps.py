@@ -19,7 +19,7 @@ def fetch_activities(conn: Any, proj_id: str) -> List[dict]:
     """Fetch all activities for a project with WBS join."""
     cur = conn.cursor()
     cur.execute(
-        """SELECT a.proj_id, a.task_id, a.name, a.duration_hrs, a.wbs_id, a.calendar_id,
+        """SELECT a.proj_id, a.task_id, a.task_code, a.name, a.duration_hrs, a.wbs_id, a.calendar_id,
            a.early_start, a.early_finish, a.late_start, a.late_finish, a.total_float_hrs,
            a.free_float_hrs, a.is_critical, a.is_near_critical, a.is_milestone,
            a.constraint_type, a.constraint_date,

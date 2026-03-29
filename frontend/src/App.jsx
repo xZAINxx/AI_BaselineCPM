@@ -8,6 +8,7 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import GanttView from './components/GanttView.jsx'
 import ScheduleHealth from './components/ScheduleHealth.jsx'
 import UploadPanel from './components/UploadPanel.jsx'
+import { TableSkeleton } from './components/LoadingSkeleton.jsx'
 import { buildDisplayRows } from './utils/displayRows.js'
 
 const API = '/api'
@@ -44,12 +45,19 @@ export default function App() {
   const [splitPct, setSplitPct] = useState(58)
   const [bottomTab, setBottomTab] = useState('details')
   const [bottomOpen, setBottomOpen] = useState(true)
+  const [chartFullView, setChartFullView] = useState(false)
+  const [bottomHeight, setBottomHeight] = useState(200)
+  const [dataLoading, setDataLoading] = useState(false)
+  const [useCalendarDates, setUseCalendarDates] = useState(false)
+  const [calendarDates, setCalendarDates] = useState(null)
 
   const tableScrollRef = useRef(null)
   const ganttRef = useRef(null)
   const syncScrollRef = useRef(false)
   const dragSplitRef = useRef({ active: false, root: null })
   const splitRootRef = useRef(null)
+  const dragBottomRef = useRef({ active: false })
+  const workAreaRef = useRef(null)
 
   useLayoutEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -75,21 +83,30 @@ export default function App() {
       setRelationships([])
       setDiagnostics(null)
       setWbsList([])
-      return
+      setCalendarDates(null)
+      return []
     }
-    const [aRes, rRes, dRes, wRes] = await Promise.all([
-      fetch(`${API}/projects/${encodeURIComponent(projId)}/activities`),
-      fetch(`${API}/projects/${encodeURIComponent(projId)}/relationships`),
-      fetch(`${API}/projects/${encodeURIComponent(projId)}/diagnostics`),
-      fetch(`${API}/projects/${encodeURIComponent(projId)}/wbs`),
-    ])
-    if (aRes.ok) {
-      const a = await aRes.json()
-      setActivities(a.items || [])
+    setDataLoading(true)
+    let activityItems = []
+    try {
+      const [aRes, rRes, dRes, wRes] = await Promise.all([
+        fetch(`${API}/projects/${encodeURIComponent(projId)}/activities`),
+        fetch(`${API}/projects/${encodeURIComponent(projId)}/relationships`),
+        fetch(`${API}/projects/${encodeURIComponent(projId)}/diagnostics`),
+        fetch(`${API}/projects/${encodeURIComponent(projId)}/wbs`),
+      ])
+      if (aRes.ok) {
+        const a = await aRes.json()
+        activityItems = a.items || []
+        setActivities(activityItems)
+      }
+      if (rRes.ok) setRelationships(await rRes.json())
+      if (dRes.ok) setDiagnostics(await dRes.json())
+      if (wRes.ok) setWbsList(await wRes.json())
+    } finally {
+      setDataLoading(false)
     }
-    if (rRes.ok) setRelationships(await rRes.json())
-    if (dRes.ok) setDiagnostics(await dRes.json())
-    if (wRes.ok) setWbsList(await wRes.json())
+    return activityItems
   }, [])
 
   const onScheduleChanged = useCallback(async () => {
@@ -98,9 +115,33 @@ export default function App() {
     setHealthSuggestionsKey((k) => k + 1)
   }, [selectedProjectId, loadProjectData, refreshProjects])
 
+  const onActivityCreated = useCallback(
+    async (taskId) => {
+      const items = await loadProjectData(selectedProjectId)
+      await refreshProjects()
+      setHealthSuggestionsKey((k) => k + 1)
+      const found = items.find((a) => String(a.task_id) === String(taskId))
+      if (found) setSelectedActivity(found)
+    },
+    [selectedProjectId, loadProjectData, refreshProjects],
+  )
+
   useEffect(() => {
     loadProjectData(selectedProjectId)
   }, [selectedProjectId, loadProjectData])
+
+  useEffect(() => {
+    if (!useCalendarDates || !selectedProjectId) {
+      setCalendarDates(null)
+      return
+    }
+    let cancelled = false
+    fetch(`${API}/projects/${encodeURIComponent(selectedProjectId)}/calendar-dates`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (!cancelled && data) setCalendarDates(data.dates) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [useCalendarDates, selectedProjectId, activities])
 
   useEffect(() => {
     const onPrompt = (e) => {
@@ -177,16 +218,26 @@ export default function App() {
 
   useEffect(() => {
     const onMove = (e) => {
-      if (!dragSplitRef.current.active) return
-      const root = dragSplitRef.current.root
-      if (!root) return
-      const rect = root.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const pct = (x / rect.width) * 100
-      setSplitPct(Math.min(85, Math.max(22, pct)))
+      if (dragSplitRef.current.active) {
+        const root = dragSplitRef.current.root
+        if (!root) return
+        const rect = root.getBoundingClientRect()
+        const x = e.clientX - rect.left
+        const pct = (x / rect.width) * 100
+        setSplitPct(Math.min(85, Math.max(22, pct)))
+      }
+      if (dragBottomRef.current.active) {
+        const workArea = workAreaRef.current
+        if (!workArea) return
+        const rect = workArea.getBoundingClientRect()
+        const newHeight = rect.bottom - e.clientY
+        const maxHeight = rect.height * 0.6
+        setBottomHeight(Math.min(maxHeight, Math.max(100, newHeight)))
+      }
     }
     const onUp = () => {
       dragSplitRef.current.active = false
+      dragBottomRef.current.active = false
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
     }
@@ -202,6 +253,13 @@ export default function App() {
     e.preventDefault()
     dragSplitRef.current = { active: true, root: splitRootRef.current }
     document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
+  const onBottomHandleDown = (e) => {
+    e.preventDefault()
+    dragBottomRef.current = { active: true }
+    document.body.style.cursor = 'row-resize'
     document.body.style.userSelect = 'none'
   }
 
@@ -264,9 +322,9 @@ export default function App() {
         </div>
 
         <div className="sidebar-footer">
-          Offline · SQLite · CPM in hours
+          Offline · SQLite · 8 h/day workday
           <br />
-          8 h/day for date display
+          Dates: DD-MMM-YY
         </div>
       </aside>
 
@@ -312,41 +370,65 @@ export default function App() {
           >
             Schedule Health
           </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={
+              chartFullView
+                ? {
+                    borderColor: 'var(--indigo)',
+                    color: 'var(--indigo)',
+                    background: 'var(--indigo-dim)',
+                  }
+                : undefined
+            }
+            onClick={() => setChartFullView((v) => !v)}
+          >
+            {chartFullView ? 'Exit Chart View' : 'View Chart'}
+          </button>
           {cpmError ? <span className="topbar-err">{cpmError}</span> : null}
         </div>
 
-        <div className="work-area">
+        <div className="work-area" ref={workAreaRef}>
           <div
             ref={splitRootRef}
             className="split-grid"
-            style={{ gridTemplateColumns: `${splitPct}% 6px minmax(0, 1fr)` }}
+            style={{ gridTemplateColumns: chartFullView ? '0 0 1fr' : `${splitPct}% 6px minmax(0, 1fr)` }}
           >
-            <section className="split-pane" aria-label="Activity table">
-              <ActivityTable
-                displayRows={displayRows}
-                activitiesCount={activities.length}
-                sort={sort}
-                setSort={setSort}
-                selectedId={selectedActivity ? String(selectedActivity.task_id) : null}
-                onSelectActivity={(a) => setSelectedActivity(a)}
-                filterSearch={filterSearch}
-                onFilterSearch={setFilterSearch}
-                criticalOnly={criticalOnly}
-                onCriticalOnly={setCriticalOnly}
-                longestPathOnly={longestPathOnly}
-                onLongestPathOnly={setLongestPathOnly}
-                groupByWbs={groupByWbs}
-                onGroupByWbs={setGroupByWbs}
-                tableScrollRef={tableScrollRef}
-                onTableScroll={onTableScroll}
-              />
+            <section className="split-pane" aria-label="Activity table" style={chartFullView ? { overflow: 'hidden' } : undefined}>
+              {dataLoading && activities.length === 0 ? (
+                <TableSkeleton rows={15} />
+              ) : (
+                <ActivityTable
+                  displayRows={displayRows}
+                  activitiesCount={activities.length}
+                  sort={sort}
+                  setSort={setSort}
+                  selectedId={selectedActivity ? String(selectedActivity.task_id) : null}
+                  onSelectActivity={(a) => setSelectedActivity(a)}
+                  filterSearch={filterSearch}
+                  onFilterSearch={setFilterSearch}
+                  criticalOnly={criticalOnly}
+                  onCriticalOnly={setCriticalOnly}
+                  longestPathOnly={longestPathOnly}
+                  onLongestPathOnly={setLongestPathOnly}
+                  groupByWbs={groupByWbs}
+                  onGroupByWbs={setGroupByWbs}
+                  useCalendarDates={useCalendarDates}
+                  onUseCalendarDates={setUseCalendarDates}
+                  calendarDates={calendarDates}
+                  tableScrollRef={tableScrollRef}
+                  onTableScroll={onTableScroll}
+                />
+              )}
             </section>
             <div
-              className="splitter"
+              className={`splitter${chartFullView ? ' hidden' : ''}`}
               role="separator"
               aria-orientation="vertical"
-              tabIndex={0}
-              onMouseDown={onSplitterDown}
+              tabIndex={chartFullView ? -1 : 0}
+              onMouseDown={chartFullView ? undefined : onSplitterDown}
+              style={chartFullView ? { cursor: 'default', pointerEvents: 'none' } : undefined}
             />
             <section className="split-pane" aria-label="Gantt chart">
               <GanttView
@@ -369,7 +451,16 @@ export default function App() {
             </section>
           </div>
 
-          <div className={`bottom-panel ${bottomOpen ? 'open' : 'collapsed'}`}>
+          <div
+            className={`bottom-panel ${bottomOpen ? 'open' : 'collapsed'}`}
+            style={bottomOpen ? { height: bottomHeight } : undefined}
+          >
+            <div
+              className="bottom-panel-handle"
+              onMouseDown={onBottomHandleDown}
+              role="separator"
+              aria-orientation="horizontal"
+            />
             <div className="bottom-panel-tabs">
               <button
                 type="button"
@@ -409,6 +500,7 @@ export default function App() {
                   projId={selectedProjectId}
                   apiBase={API}
                   onActivityUpdated={onScheduleChanged}
+                  onActivityCreated={onActivityCreated}
                   wbsList={wbsList}
                   relationships={relationships}
                   activities={activities}
@@ -455,7 +547,7 @@ export default function App() {
             DCMA:{' '}
             <strong style={{ color: 'var(--amber)' }}>{sum?.dcma_total_checks > 0 ? `${sum.dcma_pass_count}/${sum.dcma_total_checks}` : '—'}</strong>
           </div>
-          <div className="statusbar-item">Offline · SQLite · CPM hours · 8 h/day</div>
+          <div className="statusbar-item">Offline · SQLite · 8h/day · DD-MMM-YY</div>
         </div>
       </main>
       </ErrorBoundary>

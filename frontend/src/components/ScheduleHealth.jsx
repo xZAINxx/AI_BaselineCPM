@@ -146,6 +146,7 @@ export default function ScheduleHealth({
     if (!projId || !autoFixes?.length || fixApplying) return
     const toApply = autoFixes.filter((_, i) => fixSelected[i])
     if (toApply.length === 0) return
+    if (!window.confirm(`Apply ${toApply.length} fix(es) and re-run CPM? This will modify the schedule.`)) return
     setFixApplying(true)
     setFixResult(null)
     try {

@@ -86,11 +86,26 @@ flowchart LR
 - Day/Week/Month zoom levels
 - Click-to-select: clicking a Gantt bar selects the activity in the table
 
+### Calendar Engine
+- P6 work calendar parsing (`clndr_data` format)
+- Calendar-aware date display toggle (respects non-work days)
+- Fallback to default 5-day, 8h/day calendar
+
+### Resource Assignments
+- Parse RSRC and TASKRSRC tables from XER
+- View resource assignments per activity in the details panel
+- Resource summary API endpoint
+
+### Activity Codes
+- Parse ACTVTYPE, ACTVCODE, and TASKACTV tables from XER
+- Display activity codes as colored badges in the details panel
+- Activity code types and values API endpoints
+
 ### Import & Export
 - **Drag-and-drop** or file picker for .xer import
 - P6 date format parsing: ISO strings, `YYYY-MM-DD`, `DD-MMM-YY`, and numeric hours
 - **Excel export** for activities/CPM schedule
-- **CSV export** for diagnostics findings
+- **CSV export** for diagnostics findings and baseline comparisons
 - **Project deletion** with confirmation dialog
 
 ### UI
@@ -98,6 +113,13 @@ flowchart LR
 - Error boundary component for graceful failure recovery
 - Resizable split panes (table | Gantt)
 - Scroll sync between table and Gantt
+- Loading skeletons during data fetching
+- Confirmation dialogs for destructive actions (delete baseline, delete relationship, apply fixes)
+
+### Docker
+- Production Docker setup (nginx + FastAPI)
+- Development Docker setup with hot reload
+- docker-compose for easy deployment
 
 ## Prerequisites
 
@@ -170,6 +192,30 @@ Test suites:
 - `test_cpm_engine.py` — CPM chains, parallel paths, lag, SS/SF, cycles, constraints, retained logic
 - `test_diagnostics.py` — Open ends, DCMA scoring, negative float, near-critical, truncation
 - `test_baselines.py` — Baseline save/compare/increment
+- `test_calendar_engine.py` — Calendar parsing, work-day computation, date conversion
+- `test_ai_engine.py` — Rule-based AI functions (no API key required)
+- `test_integration.py` — Full workflow smoke test (30 assertions)
+- `test_edge_cases.py` — CPM edge cases, diagnostics edge cases, API error handling
+
+## Run with Docker
+
+**Production** (builds optimized frontend, serves via nginx):
+```bash
+docker-compose up --build -d
+```
+Open http://localhost. API at http://localhost/api.
+
+**Development** (hot reload for both frontend and backend):
+```bash
+docker-compose -f docker-compose.dev.yml up --build
+```
+Open http://localhost:5173. Backend at http://localhost:8000.
+
+**Stop:**
+```bash
+docker-compose down        # keeps data volume
+docker-compose down -v     # removes data volume too
+```
 
 ## Limitations
 

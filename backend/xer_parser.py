@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
@@ -215,6 +216,10 @@ def import_xer_to_sqlite(conn: Any, data: bytes, filename: str = "upload.xer") -
     cur = conn.cursor()
     cur.execute("DELETE FROM calendars WHERE proj_id = ?", (proj_id,))
     cur.execute("DELETE FROM wbs WHERE proj_id = ?", (proj_id,))
+    try:
+        cur.execute("DELETE FROM xer_raw_tables WHERE proj_id = ?", (proj_id,))
+    except Exception:
+        pass
     cur.execute("DELETE FROM projects WHERE proj_id = ?", (proj_id,))
 
     cur.execute(
@@ -230,6 +235,9 @@ def import_xer_to_sqlite(conn: Any, data: bytes, filename: str = "upload.xer") -
             tid = d.get("task_id")
             if not tid:
                 continue
+            task_code = d.get("task_code") or d.get("task_short_name") or ""
+            if not task_code:
+                task_code = str(tid)
             p = d.get("proj_id")
             if p and str(p) != str(proj_id):
                 continue
@@ -244,7 +252,7 @@ def import_xer_to_sqlite(conn: Any, data: bytes, filename: str = "upload.xer") -
             cstr_type = normalize_constraint_type(d.get("cstr_type") or d.get("constraint_type") or "")
             cstr_date = parse_constraint_date(d.get("cstr_date") or d.get("constraint_date") or "")
             act_rows.append((
-                str(tid), proj_id, name, dur,
+                str(tid), str(task_code), proj_id, name, dur,
                 str(cal) if cal else None, str(wbs) if wbs else None, is_ms,
                 cstr_type, cstr_date,
             ))
@@ -311,6 +319,144 @@ def import_xer_to_sqlite(conn: Any, data: bytes, filename: str = "upload.xer") -
             )
             cal_count += 1
 
+    # Parse resource definitions
+    rsrc_fields, rsrc_rows = tables.get("RSRC", ([], []))
+    rsrc_count = 0
+    if rsrc_fields:
+        cur.execute("DELETE FROM resources WHERE proj_id = ?", (proj_id,))
+        for row in rsrc_rows:
+            d = row_to_dict(rsrc_fields, row)
+            rid = d.get("rsrc_id")
+            if not rid:
+                continue
+            try:
+                cur.execute(
+                    """INSERT OR REPLACE INTO resources
+                       (rsrc_id, proj_id, rsrc_short_name, rsrc_name, rsrc_type)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (str(rid), proj_id,
+                     d.get("rsrc_short_name", ""),
+                     d.get("rsrc_name", ""),
+                     d.get("rsrc_type", "")),
+                )
+                rsrc_count += 1
+            except Exception:
+                pass
+
+    # Parse task resource assignments
+    taskrsrc_fields, taskrsrc_rows = tables.get("TASKRSRC", ([], []))
+    taskrsrc_count = 0
+    if taskrsrc_fields:
+        cur.execute("DELETE FROM task_resources WHERE proj_id = ?", (proj_id,))
+        for row in taskrsrc_rows:
+            d = row_to_dict(taskrsrc_fields, row)
+            tid = d.get("task_id")
+            if not tid:
+                continue
+            p = d.get("proj_id")
+            if p and str(p) != str(proj_id):
+                continue
+            try:
+                cur.execute(
+                    """INSERT INTO task_resources
+                       (proj_id, task_id, rsrc_id, rsrc_name,
+                        target_qty, target_cost, actual_qty, actual_cost,
+                        remain_qty, remain_cost)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (proj_id, str(tid),
+                     d.get("rsrc_id", ""),
+                     d.get("rsrc_name", d.get("rsrc_short_name", "")),
+                     _safe_float(d.get("target_qty"), 0),
+                     _safe_float(d.get("target_cost"), 0),
+                     _safe_float(d.get("act_reg_qty") or d.get("actual_qty"), 0),
+                     _safe_float(d.get("act_reg_cost") or d.get("actual_cost"), 0),
+                     _safe_float(d.get("remain_qty"), 0),
+                     _safe_float(d.get("remain_cost"), 0)),
+                )
+                taskrsrc_count += 1
+            except Exception:
+                pass
+
+    # Parse activity code types (ACTVTYPE)
+    actvtype_fields, actvtype_rows = tables.get("ACTVTYPE", ([], []))
+    actvtype_count = 0
+    if actvtype_fields:
+        for row in actvtype_rows:
+            d = row_to_dict(actvtype_fields, row)
+            atid = d.get("actv_code_type_id")
+            if not atid:
+                continue
+            try:
+                cur.execute(
+                    """INSERT OR REPLACE INTO activity_code_types
+                       (actv_code_type_id, proj_id, actv_code_type, seq_num)
+                       VALUES (?, ?, ?, ?)""",
+                    (str(atid), proj_id, d.get("actv_code_type", ""), _safe_int(d.get("seq_num"), 0)),
+                )
+                actvtype_count += 1
+            except Exception:
+                pass
+
+    # Parse activity code values (ACTVCODE)
+    actvcode_fields, actvcode_rows = tables.get("ACTVCODE", ([], []))
+    if actvcode_fields:
+        for row in actvcode_rows:
+            d = row_to_dict(actvcode_fields, row)
+            acid = d.get("actv_code_id")
+            if not acid:
+                continue
+            try:
+                cur.execute(
+                    """INSERT OR REPLACE INTO activity_codes
+                       (actv_code_id, actv_code_type_id, proj_id, short_name,
+                        actv_code_name, parent_actv_code_id, seq_num, color)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (str(acid), d.get("actv_code_type_id", ""), proj_id,
+                     d.get("short_name", ""), d.get("actv_code_name", ""),
+                     d.get("parent_actv_code_id"), _safe_int(d.get("seq_num"), 0),
+                     d.get("color")),
+                )
+            except Exception:
+                pass
+
+    # Parse task-to-code assignments (TASKACTV)
+    taskactv_fields, taskactv_rows = tables.get("TASKACTV", ([], []))
+    actvcode_assign_count = 0
+    if taskactv_fields:
+        cur.execute("DELETE FROM task_activity_codes WHERE proj_id = ?", (proj_id,))
+        for row in taskactv_rows:
+            d = row_to_dict(taskactv_fields, row)
+            tid = d.get("task_id")
+            acid = d.get("actv_code_id")
+            if not tid or not acid:
+                continue
+            p = d.get("proj_id")
+            if p and str(p) != str(proj_id):
+                continue
+            try:
+                cur.execute(
+                    """INSERT INTO task_activity_codes
+                       (proj_id, task_id, actv_code_type_id, actv_code_id)
+                       VALUES (?, ?, ?, ?)""",
+                    (proj_id, str(tid),
+                     str(d.get("actv_code_type_id", "")),
+                     str(acid)),
+                )
+                actvcode_assign_count += 1
+            except Exception:
+                pass
+
+    # Store all raw XER tables for later export
+    for tbl_name, (fields, rows) in tables.items():
+        try:
+            cur.execute(
+                """INSERT OR REPLACE INTO xer_raw_tables (proj_id, table_name, field_names, row_data)
+                   VALUES (?, ?, ?, ?)""",
+                (proj_id, tbl_name, json.dumps(fields), json.dumps(rows)),
+            )
+        except Exception:
+            pass
+
     conn.commit()
 
     return {
@@ -320,4 +466,6 @@ def import_xer_to_sqlite(conn: Any, data: bytes, filename: str = "upload.xer") -
         "relationships_count": len(rel_rows),
         "calendars_count": cal_count,
         "wbs_count": wbs_count,
+        "resources_count": rsrc_count,
+        "task_resources_count": taskrsrc_count,
     }
